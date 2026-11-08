@@ -1,4 +1,4 @@
-"""CIC training checks independent of packet capture and later experiment stages."""
+"""CIC/InSDN training checks independent of packet capture and combined training."""
 import contextlib
 import io
 import json
@@ -39,6 +39,16 @@ def tiny_estimators(*_):
               for name in ("dt", "rf", "xgb", "lgbm")}
     models["lr"] = (LogisticRegression(max_iter=1000), {"C": [0.1, 1.0]})
     return models
+
+
+def insdn_sample():
+    # Use the actual InSDN header, independently of the production alias mapping.
+    frame = sample()
+    frame.columns = ["Dst Port", "Flow Duration", "Tot Fwd Pkts", "Tot Bwd Pkts",
+                     "TotLen Fwd Pkts", "TotLen Bwd Pkts", "FIN Flag Cnt", "SYN Flag Cnt",
+                     "RST Flag Cnt", "PSH Flag Cnt", "ACK Flag Cnt", "URG Flag Cnt", "Label"]
+    frame["Label"] = np.where(frame.Label == "BENIGN", "Normal", "Probe")
+    return frame
 
 
 class TrainingTests(unittest.TestCase):
@@ -84,6 +94,68 @@ class TrainingTests(unittest.TestCase):
             sample().drop(columns=[FEATURES[0]]).to_csv(Path(tmp) / "bad.csv", index=False)
             with self.assertRaisesRegex(ValueError, "missing/ambiguous columns"):
                 read_sample(tmp)
+
+    def test_insdn_schema_normal_labels_and_original_counts(self):
+        frame = insdn_sample()
+        frame.loc[:14, "Label"] = "Normal"
+        frame.loc[15:29, "Label"] = "normal"
+        frame.loc[30:44, "Label"] = "NORMAL"
+        frame.loc[45:, "Label"] = "Probe"
+        frame["Src IP"] = "192.0.2.1"
+        frame["Flow ID"] = "not-a-training-feature"
+        with tempfile.TemporaryDirectory(dir=ROOT / "tests") as tmp:
+            frame.rename(columns=lambda name: " " + name + " ").to_csv(
+                Path(tmp) / "insdn.csv", index=False, encoding="utf-8-sig")
+            for binary in (False, True):
+                with self.subTest(binary=binary):
+                    data, meta = read_sample(tmp, 100, binary=binary)
+                    self.assertEqual(set(data.Label), {"BENIGN", "ATTACK" if binary else "Probe"})
+                    self.assertEqual(meta["raw_class_counts"], {"Normal": 15, "normal": 15, "NORMAL": 15, "Probe": 45})
+                    self.assertEqual(set(data.columns), set(FEATURES + ["Label"]))
+                    actual = numeric_features(data).sort_values(FEATURES[0]).reset_index(drop=True)
+                    expected = numeric_features(sample()).sort_values(FEATURES[0]).reset_index(drop=True)
+                    pd.testing.assert_frame_equal(actual, expected)
+
+    def test_insdn_missing_and_ambiguous_aliases_fail(self):
+        frame = insdn_sample()
+        frame.loc[:44, "Label"] = "Normal"
+        variants = {
+            "missing": frame.drop(columns="SYN Flag Cnt"),
+            "ambiguous": frame.assign(**{"Destination Port": frame["Dst Port"]}),
+        }
+        for name, malformed in variants.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory(dir=ROOT / "tests") as tmp:
+                malformed.to_csv(Path(tmp) / "bad.csv", index=False)
+                with self.assertRaisesRegex(ValueError, "missing/ambiguous columns"):
+                    read_sample(tmp)
+
+    def test_insdn_cli_binary_training_exports_m2(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "tests") as tmp:
+            folder = Path(tmp)
+            source, out = folder / "insdn.csv", folder / "m2"
+            frame = insdn_sample()
+            frame.loc[:44, "Label"] = "Normal"
+            frame.loc[45:, "Label"] = "Probe"
+            frame.loc[45, "Label"] = "U2R"
+            frame.to_csv(source, index=False)
+            argv = ["train.py", "--data", str(source), "--dataset", "InSDN", "--out", str(out),
+                    "--binary", "--max-per-class", "100", "--trees", "2", "--folds", "2", "--tune"]
+            with patch.object(sys, "argv", argv), patch("train.estimators", side_effect=tiny_estimators), \
+                 patch("train.version", return_value="fixture-only"), contextlib.redirect_stdout(io.StringIO()):
+                main()
+            protocol = json.loads((out / "protocol.json").read_text(encoding="utf-8"))
+            self.assertEqual(protocol["dataset"], "InSDN")
+            self.assertEqual(protocol["data"]["raw_class_counts"], {"Normal": 45, "Probe": 44, "U2R": 1})
+            self.assertEqual(protocol["task"], "binary")
+            report = json.loads((out / "report_stacking.json").read_text())
+            self.assertIn("benign_false_positive_rate", report["summary"])
+            self.assertIn("attack_recall", report["summary"])
+            artifact = joblib.load(out / "models" / "stacking_ids.joblib")
+            self.assertEqual(artifact["dataset"], "InSDN")
+            self.assertEqual(set(artifact["classes"]), {"BENIGN", "ATTACK"})
+            smoke = pd.read_csv(out / "smoke_test.csv")
+            predicted = np.asarray(artifact["classes"])[artifact["model"].predict(numeric_features(smoke))]
+            self.assertEqual(predicted.tolist(), smoke.ExpectedPrediction.tolist())
 
     def test_splits_are_disjoint_and_holdout_overlap_is_purged(self):
         data = sample()

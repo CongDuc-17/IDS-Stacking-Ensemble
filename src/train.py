@@ -1,4 +1,4 @@
-"""CIC-IDS2017 baselines and two-level out-of-fold stacking."""
+"""CIC-IDS2017/InSDN baselines and two-level out-of-fold stacking, one dataset per run."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -111,7 +111,7 @@ def main():
     ap.add_argument("--trees", type=int, default=120)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--folds", type=int, default=3)
-    ap.add_argument("--binary", action="store_true", help="Map BENIGN versus all attacks before sampling")
+    ap.add_argument("--binary", action="store_true", help="Map BENIGN/Normal versus all attacks before sampling")
     ap.add_argument("--tune", action="store_true", help="Two candidates per baseline, training-only CV")
     args = ap.parse_args()
     if args.trees < 1 or args.folds < 2 or args.max_per_class < 15:

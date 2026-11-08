@@ -1,12 +1,29 @@
-"""Bounded CIC-IDS2017 CSV sampling with explicit schema validation."""
+"""Bounded CIC-IDS2017/InSDN CSV sampling with explicit schema validation."""
 from collections import Counter
 from pathlib import Path
 import numpy as np
 import pandas as pd
 from features import FEATURES
 
+
+ALIASES = {
+    "Dst Port": "Destination Port",
+    "Tot Fwd Pkts": "Total Fwd Packets",
+    "Tot Bwd Pkts": "Total Backward Packets",
+    "TotLen Fwd Pkts": "Total Length of Fwd Packets",
+    "TotLen Bwd Pkts": "Total Length of Bwd Packets",
+    "FIN Flag Cnt": "FIN Flag Count",
+    "SYN Flag Cnt": "SYN Flag Count",
+    "RST Flag Cnt": "RST Flag Count",
+    "PSH Flag Cnt": "PSH Flag Count",
+    "ACK Flag Cnt": "ACK Flag Count",
+    "URG Flag Cnt": "URG Flag Count",
+}
+
+
 def column_name(name):
-    return name.strip().lstrip("\ufeff").strip()
+    name = name.strip().lstrip("\ufeff").strip()
+    return ALIASES.get(name, name)
 
 
 def numeric_features(frame):
@@ -43,10 +60,12 @@ def read_sample(folder, max_per_class=5000, seed=42, min_class=15, *, binary=Fal
             chunk = chunk.loc[valid].copy()
             chunk["Label"] = labels.loc[valid]
             counts.update(chunk["Label"].value_counts().to_dict())
+            normal = chunk["Label"].str.casefold().isin(["benign", "normal"])
             if binary:
                 # Map before sampling/deduplication so rare attack subtypes remain eligible.
-                normal = chunk["Label"].str.casefold().eq("benign")
                 chunk["Label"] = np.where(normal, "BENIGN", "ATTACK")
+            else:
+                chunk.loc[normal, "Label"] = "BENIGN"
             chunk[FEATURES] = numeric_features(chunk)
             missing.update(chunk[FEATURES].isna().sum().to_dict())
             empty = chunk[FEATURES].isna().all(axis=1)
@@ -75,7 +94,7 @@ def read_sample(folder, max_per_class=5000, seed=42, min_class=15, *, binary=Fal
         "files": [{"path": str(p.resolve()), "bytes": p.stat().st_size} for p in paths],
         "seed": seed, "max_per_class": max_per_class,
         "task": "binary" if binary else "multiclass",
-        "label_mapping": "BENIGN (case-insensitive) -> BENIGN; all other valid labels -> ATTACK" if binary else "retain original labels",
+        "label_mapping": "BENIGN/Normal (case-insensitive) -> BENIGN; all other valid labels -> ATTACK" if binary else "BENIGN/Normal (case-insensitive) -> BENIGN; retain attack subtypes",
         "sampling": "uniform priority reservoir per binary class, then feature deduplication" if binary else "uniform priority reservoir per raw class, then feature deduplication",
         "prevalence": "class-capped sample, NOT original traffic prevalence",
         "raw_class_counts": dict(counts), "invalid_labels": invalid_labels,
