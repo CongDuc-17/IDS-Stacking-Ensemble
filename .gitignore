@@ -1,0 +1,12 @@
+.venv/
+.work-tmp/
+__pycache__/
+*.pyc
+data/
+models/
+results/*.csv
+results/*.json
+logs/
+experiments/
+deliverables/
+*.zip
