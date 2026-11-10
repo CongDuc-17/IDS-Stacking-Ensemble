@@ -2,6 +2,7 @@
 .work-tmp/
 __pycache__/
 *.pyc
+.ipynb_checkpoints/
 data/
 models/
 results/*.csv

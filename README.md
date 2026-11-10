@@ -1,6 +1,30 @@
 # Phát hiện tấn công mạng bằng Ensemble Stacking
 
-Pipeline huấn luyện **M1 trên CIC-IDS2017** và **M2 trên InSDN**: đọc dữ liệu, EDA, baseline, Stacking OOF và đánh giá trên tập test giữ riêng của từng dataset. PR2 bổ sung InSDN trên pipeline chung của PR1; mỗi lượt vẫn chỉ huấn luyện một dataset.
+Pipeline huấn luyện **M1 trên CIC-IDS2017**, **M2 trên InSDN** và **M3 trên cả hai bộ**: đọc dữ liệu, EDA, baseline, Stacking OOF và đánh giá bằng các tập test giữ riêng. PR3 chạy lại M1/M2 cùng M3 trên một protocol chung để so sánh đúng các hàng test.
+
+Xem [hướng dẫn M1/M2/M3](docs/THREE_MODELS.md) và [những phần cần hoàn thiện cho đề tài/báo cáo](docs/COMPLETION_REVIEW.md).
+
+Ngày 10/11/2026 đã bổ sung test gộp, host features, Gaussian anomaly và đồ thị giao tiếp; đã chạy EDA, ba seed M1/M2/M3 và đa lớp hai nguồn. Kết quả thật nằm trong [CURRENT_RESULTS.md](docs/CURRENT_RESULTS.md); hướng dẫn nhánh mở rộng ở [EXTENSIONS.md](docs/EXTENSIONS.md). Chưa có kết quả đo lab Kali thật hoặc xác nhận botnet bằng ground truth.
+
+[REPORT.md](docs/REPORT.md) cung cấp bản nội dung Chương 1–3, kết luận và nguồn tham khảo để đưa vào mẫu Word. Các bảng số liệu chi tiết nằm trong CURRENT_RESULTS.md.
+
+Đưa model đã huấn luyện lên Kali VM: [hướng dẫn triển khai từng bước](docs/VM_DEPLOYMENT.md), từ mạng Host-only, chuyển gói M3, cài môi trường đến kiểm tra CSV và bắt traffic live.
+
+[Kiểm chứng trên Windows](docs/WINDOWS_VALIDATION.md) có lệnh đánh giá bằng nhãn thật, phân tích beaconing và so sánh dữ liệu gộp với cùng cỡ mẫu. Người dùng đã capture HTTP localhost thành công bằng Administrator; lần agent trước đó bị Admin-only Mode từ chối vẫn được giữ như lịch sử, chưa có attack lab hoặc kết quả Kali thật.
+
+[STACKING_SCOPE.md](docs/STACKING_SCOPE.md) chốt phần ES chính và các nhánh mở rộng. Đã chạy meta-search đa lớp đủ ba seed trên cả hai nguồn; ES chưa vượt baseline. [notebooks/training.ipynb](notebooks/training.ipynb) hỗ trợ huấn luyện theo bước, mặc định chỉ đọc artifact; hướng dẫn demo gọi tên subtype ở [MULTICLASS_DEMO.md](docs/MULTICLASS_DEMO.md).
+
+## Xem theo cell trong notebook
+
+Notebook huấn luyện kết hợp: [notebooks/training_combined.ipynb](notebooks/training_combined.ipynb). Chạy M1/M2/M3 bằng pipeline chung, xác minh dữ liệu gộp và test chung; DO_TRAIN mặc định False để xem kết quả, đổi True và OUT mới để huấn luyện thật. Bài toán kết hợp hiện là BENIGN/ATTACK.
+
+Mở [notebooks/experiment.ipynb](notebooks/experiment.ipynb) để xem bảng, biểu đồ EDA, mean/SD, confusion matrix, đa lớp, Gaussian và graph. Notebook đọc artifact đã lưu; Run All không tự huấn luyện lại. Logic train vẫn dùng chung trong `src/*.py`.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-notebook.in
+```
+
+Trong VS Code, mở notebook rồi chọn kernel Python của `.venv`. Chạy cell đầu đến cuối và Save để lưu output; có thể mở lại xem các bảng/ảnh đã lưu mà không cần train lại. Biến `RUN` chọn thư mục kết quả; muốn đọc lượt mới thì đổi `RUN`, Restart Kernel rồi Run All. Khi chạy lại cần các artifact tương ứng trong `experiments/`; output đã lưu là snapshot, không tự cập nhật theo file nguồn.
 
 ## Cài đặt
 
@@ -10,6 +34,14 @@ Chạy PowerShell từ thư mục chứa README. Máy hiện có Python 3.14.6; 
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.in
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p test_training.py -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_three_models.py -v
+```
+
+Để dùng PCAP/live và chạy toàn bộ test (gồm Scapy):
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-lab.in
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
 Không cần activate venv. Bộ test CIC/InSDN độc lập với các module bắt gói tin. Các classifier nhỏ trong test chỉ kiểm tra logic chọn mô hình, OOF, refit và xuất file; điểm fixture không dùng làm kết quả thực nghiệm.
@@ -40,7 +72,7 @@ Dữ liệu được đọc theo chunk và chỉ lấy 12 đặc trưng khai bá
 | `ACK Flag Cnt` | `ACK Flag Count` |
 | `URG Flag Cnt` | `URG Flag Count` |
 
-Truyền đúng thư mục riêng vào `--data`; tránh `--data data` khi thư mục đó chứa cả hai bộ. Việc huấn luyện kết hợp thuộc PR3.
+Truyền đúng thư mục riêng vào `--data`; tránh `--data data` khi thư mục đó chứa cả hai bộ. Huấn luyện kết hợp dùng `train_all.py` với hai đường dẫn riêng.
 
 Không đưa CSV gốc, model, log hoặc môi trường Python vào Git. `.gitignore` đã loại `data/`, `models/`, `experiments/` và `.venv/`.
 
@@ -66,6 +98,22 @@ Không đưa CSV gốc, model, log hoặc môi trường Python vào Git. `.giti
 ```
 
 M1 và M2 dùng cùng thuật toán, feature, số cây, folds, seed và quy tắc chọn mô hình. Mỗi bộ được chia train/validation/test riêng; điểm của hai test khác nhau chưa chứng minh mô hình nào tốt hơn trên cùng miền dữ liệu.
+
+## Huấn luyện M1/M2/M3 với test chung
+
+```powershell
+.\.venv\Scripts\python.exe src/train_all.py --combined --out experiments/three-models-seed42 --max-per-class 5000 --trees 120 --folds 3 --seed 42 --tune
+```
+
+| Cấu hình | Development data | Test |
+|---|---|---|
+| M1 | CIC | Test CIC |
+| M2 | InSDN | Test InSDN |
+| M3 | CIC + InSDN | Cùng Test CIC của M1, cùng Test InSDN của M2 và test gộp |
+
+Khử trùng giữa hai nguồn trước khi chia tập. M3 được fit một lần rồi đánh giá trên ba test. `comparison_all.csv` có 30 hàng thuật toán/cấu hình/test; `comparison_stacking.csv` có năm hàng chỉ Stacking. Test gộp tính metrics trực tiếp trên các hàng test nối lại. `completed.json` chỉ xuất khi toàn lượt thành công. Mỗi `--out` phải mới hoặc trống. Các lượt cũ protocol v1 có 24 hàng được giữ nguyên, không tổng hợp lẫn với v2.
+
+Không dùng các kết quả M1/M2 độc lập ở PR1/PR2 để so trực tiếp với M3 nếu hash test khác. Xem hướng dẫn chi tiết để chạy đủ seed 7/21/42 và tổng hợp mean/SD.
 
 `--binary` chuyển `BENIGN`/`Normal` (không phân biệt hoa/thường) thành BENIGN và các nhãn hợp lệ còn lại thành ATTACK **trước** sampling/khử trùng. Nhãn trống bị loại. `--max-per-class` giới hạn mỗi nhãn nhị phân trước khử trùng, nên số hàng cuối có thể thấp hơn giới hạn. Số lượng từng nhãn gốc, gồm `Normal` của InSDN, vẫn được lưu trong `raw_class_counts` để truy nguồn.
 
@@ -100,6 +148,13 @@ Lưu Accuracy, Macro-F1, Weighted-F1, Precision/Recall/F1 ATTACK, FPR, FNR, conf
 
 Chỉ load `.joblib` tự tạo hoặc từ nguồn đáng tin cậy. Khớp dự đoán kỳ vọng 100% chỉ xác nhận tái lập, không phải Accuracy 100%.
 
+Kiểm tra lại model M3 đã lưu bằng CSV, không cần thư viện bắt gói tin:
+
+```powershell
+.\.venv\Scripts\python.exe src/check_model.py --model experiments/three-models-seed42/M3/models/stacking_ids.joblib --csv experiments/three-models-seed42/M3/cicids2017/smoke_test.csv
+.\.venv\Scripts\python.exe src/check_model.py --model experiments/three-models-seed42/M3/models/stacking_ids.joblib --csv experiments/three-models-seed42/M3/insdn/smoke_test.csv
+```
+
 ## Giới hạn
 
-Class cap và khử trùng thay đổi phân bố nhãn. Random split chưa bảo đảm tách phiên/thời gian; điểm trên mẫu chưa đại diện cho traffic thực tế. Tuning trước OOF không phải nested CV đầy đủ. Cùng tên cột sau ánh xạ chưa chứng minh cùng ngữ nghĩa extractor giữa hai dataset. Thời gian suy luận batch chưa phải độ trễ phát hiện live. Phiên bổ sung PR2 chưa chạy huấn luyện booster thật.
+Class cap và khử trùng thay đổi phân bố nhãn. Random split chưa bảo đảm tách phiên/thời gian; điểm trên mẫu chưa đại diện cho traffic thực tế. Tuning trước OOF không phải nested CV đầy đủ. Cùng tên cột sau ánh xạ chưa chứng minh cùng ngữ nghĩa extractor giữa hai dataset. M3 có nhiều dữ liệu hơn M1/M2 và đã thấy cả hai miền trong train. Thời gian suy luận batch chưa phải độ trễ phát hiện live. Xem kết quả và giới hạn hiện hành trong `docs/CURRENT_RESULTS.md`.
