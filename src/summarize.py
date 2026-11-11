@@ -18,6 +18,9 @@ def summarize_three_models(runs, out):
         settings.update(task=protocol["task"], features=protocol["features"],
                         stack_search=protocol["arguments"].get("stack_search", False),
                         evaluation_protocol_version=protocol.get("evaluation_protocol_version", 1),
+                        label_taxonomy=protocol.get("label_taxonomy"),
+                        macro_f1_scope=protocol.get("macro_f1_scope"),
+                        retained_classes={s: sorted(meta.get("sample_class_counts", {})) for s, meta in protocol["sources"].items()},
                         sources={source: meta["files"] for source, meta in protocol["sources"].items()},
                         split_protocol=protocol.get("protocol"),
                         duplicate_policy=protocol.get("cleanup_and_splits", {}).get("duplicate_policy"))

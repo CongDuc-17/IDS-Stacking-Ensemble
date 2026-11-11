@@ -8,7 +8,7 @@ Căn cứ chính là ghi chú cho đề tài ES: hai dataset, EDA, baseline, ch�
 - Baseline DT, RF, XGBoost, LightGBM, LR, chọn tham số bằng CV trên train.
 - Hai nhóm base learner và Logistic Regression meta learner; tạo OOF đúng fold, chọn cấu hình bằng validation, refit development rồi báo test.
 - Bảng metrics cùng test, support từng lớp, confusion, FPR/FNR và phân tích lỗi; đủ ba seed, giữ các lượt thất bại.
-- M1/M2/M3 nhị phân là thí nghiệm nguồn dữ liệu; hai mô hình đa lớp riêng phục vụ nhận diện subtype. Không gộp taxonomy khác nhau rồi gọi là mô hình đa lớp chung.
+- Có M1/M2/M3 nhị phân, mô hình subtype riêng từng nguồn và M1/M2/M3 đa lớp theo nhóm chung. Nhánh nhóm dùng bảng ánh xạ có version tại [LABEL_TAXONOMY.md](LABEL_TAXONOMY.md); không trộn metrics giữa các bài toán.
 
 ## Tìm kiếm meta learner đa lớp
 
@@ -24,13 +24,13 @@ foreach ($taskSeed in @(7,21,42)) {
 }
 ```
 
-Đổi data thành `data/InSDN(2020)` và dataset thành InSDN để chạy nguồn còn lại. Không có `--binary` là thí nghiệm đa lớp. `train_all.py --combined --stack-search` cũng hỗ trợ tìm meta learner cho protocol M1/M2/M3; cờ mặc định tắt để giữ cách chạy cũ. Summarize từ chối trộn lượt bật/tắt search.
+Đổi data thành `data/InSDN(2020)` và dataset thành InSDN để chạy nguồn còn lại. Không có `--binary` là thí nghiệm đa lớp. Với `train_all.py --combined --multiclass`, M3 cố định RF + XGBoost + LightGBM ở tầng base. `--stack-search` chọn giữa 6 cấu hình Logistic Regression cho tầng meta của M3. M1/M2 vẫn thử 12 cấu hình khi bật cờ này. Protocol M3 đa lớp mới là v4. Summarize từ chối gộp với các lượt v3 cũ.
 
 Các lượt mới của cả hai nguồn nằm trong `experiments/completion-20261110/multiclass-search-*-seed*`. Mỗi lượt lưu ba CSV split để đánh giá lại toàn test bằng model đã lưu, selection của đủ 12 ứng viên, OOF cache, predictions và báo cáo từng lớp.
 
 ## Notebook huấn luyện
 
-`notebooks/training_combined.ipynb` dành riêng cho huấn luyện kết hợp hai nguồn: gọi run_three_models, chạy M1/M2/M3 và đối chiếu số hàng, hash test chung, baseline/Stacking và ba confusion matrix M3. DO_TRAIN mặc định False; bật True và OUT mới để train thật. Bài toán gộp là nhị phân, không tự tạo taxonomy đa lớp.
+`notebooks/training_combined.ipynb` gọi run_three_models, đối chiếu hash test chung, baseline/Stacking và ba confusion matrix M3. Mặc định notebook đọc lượt đa lớp mới. Bật DO_TRAIN và chọn OUT mới để huấn luyện.
 
 `notebooks/training.ipynb` hướng dẫn từng bước đọc/làm sạch, chia tập, tuning/OOF/refit và xem metrics. Nó gọi trực tiếp các hàm trong src; không sao chép thuật toán. Mặc định DO_TRAIN=False để xem artifact; muốn train thì đổi True, chọn DATASET và OUT mới, Restart Kernel rồi Run All. `notebooks/experiment.ipynb` tiếp tục là notebook tổng hợp kết quả.
 

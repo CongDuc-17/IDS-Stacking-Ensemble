@@ -4,10 +4,10 @@ import csv
 from pathlib import Path
 from scapy.all import PcapReader
 from features import FEATURES
-from flows import FlowTable
+from flows import EXTRACTOR_VERSION, FlowTable
 
 METADATA = ["flow_first_epoch", "flow_last_epoch", "flow_emitted_epoch", "flow_close_reason",
-            "src_ip", "src_port", "dst_ip", "dst_port", "protocol"]
+            "src_ip", "src_port", "dst_ip", "dst_port", "protocol", "flow_extractor_version"]
 
 
 def main():
@@ -28,7 +28,7 @@ def main():
         writer.writeheader()
         def emit(row, meta):
             nonlocal count
-            writer.writerow({**row, **meta, **({"Label": args.label} if args.label else {})})
+            writer.writerow({**row, **meta, "flow_extractor_version": EXTRACTOR_VERSION, **({"Label": args.label} if args.label else {})})
             count += 1
         flows = FlowTable(emit, args.idle, args.max_age, args.max_flows)
         with PcapReader(args.pcap) as capture:

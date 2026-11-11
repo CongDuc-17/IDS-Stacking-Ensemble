@@ -1,4 +1,4 @@
-"""Binary M1/M2/M3 experiments with shared, globally deduplicated test sets."""
+"""M1/M2/M3 experiments with shared, globally deduplicated source test sets."""
 from argparse import Namespace
 import hashlib
 from pathlib import Path
@@ -17,13 +17,13 @@ def feature_hashes(frame):
     return pd.util.hash_pandas_object(numeric_features(frame), index=False)
 
 
-def prepare_splits(cic, insdn, seed=42, folds=3):
+def prepare_splits(cic, insdn, seed=42, folds=3, *, binary=True):
     """Deduplicate across sources before any split; preserve source-specific tests."""
     if folds < 2:
         raise ValueError("Require folds >= 2.")
     frames = []
     for source, frame in zip(SOURCES, (cic, insdn)):
-        if set(frame["Label"]) != {"BENIGN", "ATTACK"}:
+        if binary and set(frame["Label"]) != {"BENIGN", "ATTACK"}:
             raise ValueError(f"{source}: require both binary labels BENIGN and ATTACK.")
         frame = frame.copy()
         frame[FEATURES] = numeric_features(frame)
@@ -38,7 +38,7 @@ def prepare_splits(cic, insdn, seed=42, folds=3):
     metadata = {
         "conflicting_rows_removed": int(conflicts.sum()),
         "duplicate_rows_removed": int(duplicates.sum()),
-        "duplicate_policy": "Remove contradictory binary labels; keep first identical vector (CIC before InSDN) before splitting.",
+        "duplicate_policy": "Remove contradictory binary labels; keep first identical vector (CIC before InSDN) before splitting." if binary else "Remove contradictory family labels; keep first identical vector (CIC before InSDN) before splitting.",
         "rows_before": combined.groupby("source_dataset").size().to_dict(),
         "rows_after": clean.groupby("source_dataset").size().to_dict(),
     }
@@ -46,8 +46,8 @@ def prepare_splits(cic, insdn, seed=42, folds=3):
     for source in SOURCES:
         data = clean.loc[clean.source_dataset == source].reset_index(drop=True)
         counts = data["Label"].value_counts()
-        if set(counts.index) != {"BENIGN", "ATTACK"} or counts.min() < max(15, 2 * folds):
-            raise ValueError(f"{source}: too few unique rows per binary class after global cleanup: {counts.to_dict()}")
+        if len(counts) < 2 or (binary and set(counts.index) != {"BENIGN", "ATTACK"}) or counts.min() < max(15, 2 * folds):
+            raise ValueError(f"{source}: too few unique rows per class after global cleanup: {counts.to_dict()}")
         dev, test = train_test_split(data, test_size=0.2, random_state=seed, stratify=data.Label)
         train, val = train_test_split(dev, test_size=0.25, random_state=seed, stratify=dev.Label)
         if train.Label.value_counts().min() < folds:
@@ -86,23 +86,43 @@ def run_three_models(args):
         raise ValueError("Experiment output must be outside the input dataset directories.")
     from train import run_experiment, write_json
 
-    cic, cic_meta = read_sample(cic_path, args.max_per_class, args.seed, binary=True)
-    insdn, insdn_meta = read_sample(insdn_path, args.max_per_class, args.seed, binary=True)
-    splits, cleanup = prepare_splits(cic, insdn, args.seed, args.folds)
+    multiclass = getattr(args, "multiclass", False)
+    pooled_stack_variant = "trees" if multiclass and args.combined else None
+    cic, cic_meta = read_sample(cic_path, args.max_per_class, args.seed, binary=not multiclass,
+                                label_source="cicids2017" if multiclass else None)
+    insdn, insdn_meta = read_sample(insdn_path, args.max_per_class, args.seed, binary=not multiclass,
+                                    label_source="insdn" if multiclass else None)
+    splits, cleanup = prepare_splits(cic, insdn, args.seed, args.folds, binary=not multiclass)
     root.mkdir(parents=True, exist_ok=True)
     manifest = {
-        "arguments": vars(args), "task": "binary detection; BENIGN versus ATTACK",
-        "evaluation_protocol_version": 2,
+        "arguments": vars(args), "task": "multiclass attack families" if multiclass else "binary detection; BENIGN versus ATTACK",
+        "evaluation_protocol_version": 4 if pooled_stack_variant else 3 if multiclass else 2,
         "features": FEATURES, "sources": {"cicids2017": cic_meta, "insdn": insdn_meta},
         "cleanup_and_splits": cleanup,
         "protocol": "Split each source 60/20/20 after global exact-feature cleanup; M3 unions train/validation, reuses both tests.",
         "limitations": [
             "Random split does not isolate related sessions or collection times.",
-            "Binary class caps and global deduplication change class/source prevalence.",
+            "Per-class caps and global deduplication change class/source prevalence.",
             "Matching column names do not establish feature-extractor parity between datasets or live traffic.",
             "This compares pooled-data training; it is not unseen-domain validation.",
         ],
     }
+    if multiclass:
+        from taxonomy import manifest as taxonomy_manifest
+        manifest["label_taxonomy"] = taxonomy_manifest()
+        if pooled_stack_variant:
+            manifest["m3_stack_variant"] = pooled_stack_variant
+        manifest["macro_f1_scope"] = "Fixed set of truth-supported classes per test for all algorithms; full model label set in per-class reports."
+        manifest["limitations"] += [
+            "Family-level metrics are not comparable to original subtype metrics.",
+            "Some families occur in one source only; this does not validate cross-domain detection of those families.",
+        ]
+        pd.DataFrame([{"source_dataset": source, "raw_label": raw,
+                       "family": meta["raw_to_family"][raw], "raw_rows": count}
+                      for source, meta in (("cicids2017", cic_meta), ("insdn", insdn_meta))
+                      for raw, count in meta["raw_class_counts"].items()]).to_csv(root / "label_mapping.csv", index=False)
+        pd.DataFrame({s: pd.concat(list(parts.values())).Label.value_counts()
+                      for s, parts in splits.items()}).fillna(0).astype(int).sort_index().to_csv(root / "family_support.csv", index_label="family")
     write_json(root / "protocol.json", manifest)
     for source, parts in splits.items():
         folder = root / "splits" / source
@@ -126,14 +146,16 @@ def run_three_models(args):
                               "dataset": "+".join(train_sources), "out": str(root / configuration), "test_data": None})
         scores = run_experiment(config, train, val, dev, tests, {
             "configuration": configuration, "training_sources": list(train_sources),
-            "task": "binary",
+            "task": "multiclass" if multiclass else "binary",
+            **({"label_taxonomy": manifest["label_taxonomy"]} if multiclass else {}),
             "shared_protocol": str((root / "protocol.json").resolve()),
             "split_protocol": manifest["protocol"],
-        })
+        }, stack_variant=pooled_stack_variant if configuration == "M3" else None)
         for test_source, models in scores.items():
             for model, metrics in models.items():
                 rows.append({"configuration": configuration, "test_dataset": test_source,
-                             "algorithm": model, "seed": args.seed, **metrics})
+                             "algorithm": model, "seed": args.seed,
+                             **{k: v for k, v in metrics.items() if k != "macro_f1_classes_in_truth"}})
         # Keep completed configurations reviewable if a later configuration fails.
         pd.DataFrame(rows).to_csv(root / "comparison_all.csv", index=False)
     frame = pd.DataFrame(rows)

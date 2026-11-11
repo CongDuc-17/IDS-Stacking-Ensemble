@@ -1,6 +1,6 @@
 # Đưa M3 lên máy ảo Kali Linux
 
-Hướng dẫn cho Windows làm host, Kali Linux x86_64 làm VM. Dùng model M3 seed 42 đã học cả CIC-IDS2017 và InSDN, phân loại **BENIGN / ATTACK**. Không cần train lại hoặc chuyển CSV gốc sang VM. Gói này phục vụ chạy suy luận; notebook và toàn bộ kết quả nghiên cứu vẫn ở project chính.
+Hướng dẫn cho Windows làm host, Kali Linux x86_64 làm VM. Dùng **M3 đa lớp seed 42**, học từ CIC-IDS2017 + InSDN theo taxonomy `cic-insdn-families-v1`, phân loại 9 nhóm. Xem cấu hình tầng base và tầng meta trong `MODEL_CARD.json`. Đây là bản kiểm thử triển khai; chưa có xác nhận độ chính xác live Linux. Không cần train lại hoặc chuyển CSV gốc sang VM. Gói này phục vụ chạy suy luận; notebook và toàn bộ kết quả nghiên cứu vẫn ở project chính.
 
 ## 1. Chuẩn bị máy ảo và mạng
 
@@ -29,11 +29,17 @@ Sensor chỉ quan sát traffic đi qua interface đã chọn. Với cấu hình 
 
 ## 2. Chuyển gói triển khai sang Kali
 
-File được chuẩn bị ở project Windows:
+Từ thư mục project Windows, dựng lại gói khi code hoặc model thay đổi (lệnh từ chối ghi đè ZIP đã có; dùng `--out` mới):
 
-`deliverables/ids-vm-m3-20261110.zip`
+```powershell
+.\.venv\Scripts\python.exe src/package_vm.py
+```
 
-Gói chứa script suy luận/trích flow/đánh giá và beaconing offline, model M3, phiên bản thư viện, protocol/selection, hai CSV smoke và hai test CSV có nhãn để đánh giá lại. Không chứa dữ liệu huấn luyện gốc hay `.venv` Windows.
+File đã được chuẩn bị:
+
+`deliverables/ids-vm-multiclass-combined-seed42-trees.zip`
+
+Gói chứa runtime đúng phiên bản mới, model M3 9 nhóm, package pin, taxonomy/version/hash, protocol/selection, mapping/support, hai smoke CSV, hai test CSV đã ánh xạ và công cụ parity. `MODEL_CARD.json` ghi loại model và SHA-256. Các ZIP M3 nhị phân/đa lớp riêng từng nguồn cũ được giữ để tái lập, không dùng thay cho gói này. Không chứa dữ liệu huấn luyện gốc hay `.venv` Windows.
 
 Dùng Shared Folder hoặc kéo thả file ZIP sang `~/Downloads/` trong Kali. Cách dự phòng khi chia sẻ file chưa hoạt động: trong PowerShell Windows, mở terminal riêng:
 
@@ -46,8 +52,8 @@ Chỉ bind địa chỉ Host-only thật của Windows. Trên Kali:
 
 ```bash
 mkdir -p ~/Downloads
-curl -f http://192.168.56.1:8000/ids-vm-m3-20261110.zip \
-  -o ~/Downloads/ids-vm-m3-20261110.zip
+curl -f http://192.168.56.1:8000/ids-vm-multiclass-combined-seed42-trees.zip \
+  -o ~/Downloads/ids-vm-multiclass-combined-seed42-trees.zip
 ```
 
 Nếu Windows hỏi quyền firewall, chỉ cho phép kết nối lab tương ứng; không tắt toàn bộ firewall. Dừng server bằng Ctrl+C sau khi tải. Nếu dùng Shared Folder, không cần mở server HTTP này.
@@ -62,12 +68,12 @@ sudo apt install -y curl unzip tcpdump libpcap-dev libgomp1
 
 mkdir -p ~/ids-lab
 cd ~/ids-lab
-unzip ~/Downloads/ids-vm-m3-20261110.zip
-cd ids-vm-m3
+unzip ~/Downloads/ids-vm-multiclass-combined-seed42-trees.zip
+cd ids-vm-multiclass-combined-seed42-trees
 sha256sum -c SHA256SUMS
 ```
 
-Mọi file phải báo `OK`. Nếu thư mục `ids-vm-m3` đã tồn tại, dùng thư mục lab mới để tránh trộn các phiên bản.
+Mọi file phải báo `OK`. Nếu thư mục `ids-vm-multiclass-combined-seed42-trees` đã tồn tại, dùng thư mục lab mới để tránh trộn các phiên bản.
 
 Model được tạo bằng **Python 3.14.6**. Dùng uv cài đúng Python và thư viện đã pin:
 
@@ -88,7 +94,7 @@ Nếu uv chưa tìm thấy bản Python yêu cầu, cập nhật uv theo phươn
 
 ## 4. Kiểm tra model trước khi bắt traffic
 
-Chạy từ `~/ids-lab/ids-vm-m3`:
+Chạy từ `~/ids-lab/ids-vm-multiclass-combined-seed42-trees`:
 
 ```bash
 .venv/bin/python src/check_model.py \
@@ -115,14 +121,14 @@ Prediction match: 100.00%
   --csv evaluation/insdn.csv --out logs/evaluate-insdn01
 ```
 
-M3 seed 42 hiện có Accuracy CIC khoảng 99,309%, InSDN khoảng 99,933%; output có errors.csv và confusion matrix. Đây là đánh giá lại test đã có, không phải phép đo live trên VM.
+M3 đa lớp seed 42 hiện có Accuracy CIC khoảng 97,421%, InSDN khoảng 97,903%; Macro-F1 lần lượt 96,591% và 93,382%. Đối chiếu `evaluation/reference-*.json`, chỉ lấy mục `stacking`. Output có errors.csv và confusion matrix. Đây là đánh giá lại test đã có, không phải phép đo live trên VM.
 
 ## 5. Chạy detector live
 
 Kiểm tra lại tên interface Host-only bằng `ip -br -4 addr`. Mở **terminal Kali A**:
 
 ```bash
-cd ~/ids-lab/ids-vm-m3
+cd ~/ids-lab/ids-vm-multiclass-combined-seed42-trees
 mkdir -p logs/run01 captures
 
 sudo "$(pwd)/.venv/bin/python" src/detect.py \
@@ -133,7 +139,7 @@ sudo "$(pwd)/.venv/bin/python" src/detect.py \
 
 Đổi `eth1` trước khi chạy. Chờ dòng `Capturing eth1; Ctrl+C to stop.`. Cảnh báo `EXPERIMENTAL ... parity is unvalidated` là giới hạn nghiên cứu đã biết, không phải thông báo cài đặt thất bại.
 
-Detector gom gói thành flow. Flow thường được chốt khi idle 10 giây; flow tiếp diễn có giới hạn max-age 60 giây. Không kỳ vọng mỗi request đều in kết quả ngay lập tức. Terminal chỉ in các flow dự đoán ATTACK; file `logs/run01/predictions.jsonl` lưu cả BENIGN và ATTACK.
+Detector gom gói thành flow. Flow thường được chốt khi idle 10 giây; flow tiếp diễn có giới hạn max-age 60 giây. Không kỳ vọng mỗi request đều in kết quả ngay lập tức. Terminal in flow có nhãn khác BENIGN, ví dụ RECON/DOS; `logs/run01/predictions.jsonl` lưu cả flow bình thường và tấn công. Xem bằng `tail -f logs/run01/predictions.jsonl` nếu terminal im lặng.
 
 ## 6. Gửi traffic thử từ Windows
 
@@ -155,7 +161,7 @@ curl.exe http://192.168.56.101:8080/
 Phải kết nối thành công và nhận `IDS lab demo`. Chờ hơn 10 giây không gửi request, rồi mở **terminal Kali C**:
 
 ```bash
-cd ~/ids-lab/ids-vm-m3
+cd ~/ids-lab/ids-vm-multiclass-combined-seed42-trees
 tail -n 5 logs/run01/predictions.jsonl
 ```
 
@@ -167,14 +173,14 @@ Nếu Windows đã có Nmap, có thể thử lượt scan nhỏ trên đúng VM 
 nmap -sT -p 1-1000 --max-rate 50 192.168.56.101
 ```
 
-M3 nhị phân chỉ trả BENIGN/ATTACK, không trả tên PortScan. Không có bảo đảm mọi scan đều được nhận đúng. Tách lượt BENIGN và lượt scan ra PCAP/log riêng nếu định tính FPR/FNR.
+M3 mới trả nhóm `RECON` cho dò quét, không trả subtype `PortScan`; các nhóm khác gồm BENIGN, BOT, BRUTE_FORCE, DDOS, DOS, INFILTRATION, U2R, WEB_ATTACK. Không có bảo đảm mọi scan đều được nhận đúng. Tách lượt BENIGN và lượt scan ra PCAP/log riêng nếu định tính FPR/FNR.
 
 ## 7. Lưu PCAP và đánh giá có thể kiểm tra lại
 
 Trước khi tạo traffic, có thể mở thêm terminal và bắt đúng interface Host-only:
 
 ```bash
-cd ~/ids-lab/ids-vm-m3
+cd ~/ids-lab/ids-vm-multiclass-combined-seed42-trees
 mkdir -p captures
 sudo tcpdump -Z "$USER" -i eth1 -nn -s 0 \
   -w captures/benign01.pcap 'host 192.168.56.1 and (tcp or udp)'
@@ -192,15 +198,20 @@ Chỉ tạo request bình thường vào HTTP server trong lượt này. Dừng 
   --idle 10 --max-age 60
 
 .venv/bin/python src/evaluate_lab.py \
+  --model models/stacking_ids.joblib \
   --predictions logs/benign01-offline/predictions.jsonl \
   --truth captures/benign01-truth.csv --out logs/benign01-offline/metrics.json
 ```
 
-Mỗi lượt dùng đường dẫn output mới: detector từ chối khởi động nếu `predictions.jsonl` đã tồn tại, kể cả file rỗng; extractor cũng từ chối ghi đè CSV. Gán `--label BENIGN` chỉ khi đã xác minh capture chỉ có traffic BENIGN; capture hỗn hợp cần nhãn theo từng flow. Với capture attack đã xác minh, dùng `ATTACK` vì M3 là nhị phân. File metrics sẽ ghi FPR, FNR (null nếu không có attack), số flow ghép/không ghép và thời gian suy luận. Độ trễ từ gói đầu tới kết quả chỉ đo ở live, không suy ra từ replay offline.
+Mỗi lượt dùng đường dẫn output mới: detector từ chối khởi động nếu `predictions.jsonl` đã tồn tại, kể cả file rỗng; extractor cũng từ chối ghi đè CSV. Gán `--label BENIGN` chỉ khi đã xác minh capture chỉ có traffic BENIGN; capture hỗn hợp cần nhãn theo từng flow. Với capture scan đã xác minh và chỉ có flow scan trong scope, dùng `--label RECON` và model 9 lớp khi chấm. Capture hỗn hợp cần nhãn từng flow. Nếu có nhãn CIC gốc như PortScan, chấm với `--model models/stacking_ids.joblib --truth-source cicids2017` để ánh xạ. Kịch bản như SYN-LAB chưa có nhãn tương đương được xác minh: chỉ dùng `--binary-only` để chấm phát hiện, không gán cứng thành DDOS/DOS. File metrics sẽ ghi FPR, FNR (null nếu không có attack), số flow ghép/không ghép và thời gian suy luận. Độ trễ từ gói đầu tới kết quả chỉ đo ở live, không suy ra từ replay offline.
 
 Trước khi đánh giá, mỗi hàng truth phải có nhãn đã xác minh. Tool chuẩn hóa khoảng trắng và các nhãn BENIGN/Normal/ATTACK không phân biệt hoa thường, giữ tên subtype khác, và báo lỗi nếu gặp nhãn rỗng, thiếu hoặc UNKNOWN ở truth/prediction. Không tự tính flow chưa rõ nhãn thành attack.
 
-## 8. Khi nào coi là đã triển khai được?
+## 8. Kiểm chứng feature và điều kiện nghiệm thu
+
+Làm theo [FEATURE_PARITY.md](FEATURE_PARITY.md) trong project, hoặc `docs/FEATURE_PARITY.md` trong ZIP: cùng một PCAP đi qua CICFlowMeter độc lập và extractor triển khai. Thiếu reference thật thì ghi nhận chưa kiểm chứng; không dùng replay cùng extractor để tự chứng nhận tương đương với dataset.
+
+Khi nào coi là pipeline đã chạy trên VM?
 
 1. Hai smoke test đều `Prediction match: 100.00%`.
 2. HTTP Windows → Kali kết nối được trên Host-only.
@@ -220,5 +231,7 @@ Trước khi đánh giá, mỗi hàng truth phải có nhãn đã xác minh. Too
 | Smoke test không khớp | Kiểm tra checksum, Python, package pin; không bỏ qua lỗi phiên bản |
 | Terminal detector im lặng | Terminal chỉ in ATTACK; chờ idle và xem `predictions.jsonl` |
 | VM RAM cao khi cài | Cài gói suy luận; không chuyển dữ liệu/train/notebook nếu chưa cần |
+
+Gói mới chỉ chứa phần suy luận và đánh giá; để cải thiện ES cần quay lại pipeline train/validation ở project chính. ES chưa vượt baseline trên InSDN/test gộp; không cần trì hoãn bước kiểm thử VM vì điều đó.
 
 Tài liệu chính thức: [VirtualBox networking](https://docs.oracle.com/en/virtualization/virtualbox/7.2/user/networkingdetails.html), [cài uv](https://docs.astral.sh/uv/getting-started/installation/), [cài Python bằng uv](https://docs.astral.sh/uv/guides/install-python/), [scikit-learn model persistence](https://scikit-learn.org/stable/model_persistence.html).

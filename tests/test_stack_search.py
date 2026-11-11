@@ -50,6 +50,10 @@ class StackSearchTests(unittest.TestCase):
                 winner = candidates["stack_"+protocol["selected_stack"]]
                 self.assertEqual(winner["validation_macro_f1"], max(item["validation_macro_f1"] for item in candidates.values()))
                 artifact = joblib.load(Path(tmp) / "models/stacking_ids.joblib")
+                self.assertFalse(artifact["model"].passthrough)
+                expected_meta_columns = 9 if multiclass else 3
+                self.assertEqual(artifact["model"].transform(numeric_features(test)).shape[1], expected_meta_columns)
+                self.assertEqual(artifact["model"].final_estimator_.n_features_in_, expected_meta_columns)
                 self.assertEqual(artifact["model"].final_estimator_.C, winner["meta_C"])
                 self.assertEqual(artifact["model"].final_estimator_.class_weight, winner["meta_class_weight"])
                 with np.load(Path(tmp) / "stack_oof.npz") as saved:

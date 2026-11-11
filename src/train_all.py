@@ -1,4 +1,4 @@
-"""Run M1 (CIC), M2 (InSDN), and optionally M3 (combined) on shared binary tests."""
+"""Run M1 (CIC), M2 (InSDN), and optionally M3 (combined) on shared tests."""
 import argparse
 from pathlib import Path
 
@@ -12,7 +12,8 @@ def main():
     ap.add_argument("--insdn-data", default=str(project / "data" / "InSDN(2020)"))
     ap.add_argument("--out", required=True, help="New/empty experiment directory")
     ap.add_argument("--combined", action="store_true", help="Include M3 trained on both development sets")
-    ap.add_argument("--max-per-class", type=int, default=5000, help="Rows per BINARY class per source, before deduplication")
+    ap.add_argument("--multiclass", action="store_true", help="Use common attack families; fix pooled M3 base learners to RF/XGB/LightGBM")
+    ap.add_argument("--max-per-class", type=int, default=5000, help="Rows per target class per source, before deduplication")
     ap.add_argument("--trees", type=int, default=120)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--folds", type=int, default=3)

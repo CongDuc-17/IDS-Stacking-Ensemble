@@ -1,4 +1,4 @@
-# Kết quả hiện hành — 10/11/2026
+# Kết quả hiện hành — 11/11/2026
 
 Số liệu đọc từ artifact thật trong `experiments/completion-20261110/`. Không thay thế các kết quả cũ. Model/split/log/biểu đồ trong experiments được giữ local và không đưa vào Git.
 
@@ -108,3 +108,69 @@ Các lượt mới xuất đủ splits/train.csv, validation.csv, test.csv; đã
 ## Cập nhật capture của người dùng
 
 Người dùng đã mở PowerShell Administrator và capture HTTP localhost thành công. Snapshot log windows-benign-new hiện có các flow BENIGN; đây là bằng chứng live Windows đã chạy, chưa có nhãn attack hoặc PCAP/metrics lab hoàn chỉnh. Trạng thái blocked trước đó chỉ thuộc lần agent thử không có quyền, không mô tả lần chạy của người dùng.
+
+## Đa lớp kết hợp hai nguồn theo nhóm chung
+
+Đã hoàn thành ánh xạ và huấn luyện M1/M2/M3 nhóm chung, độc lập với các model subtype bên trên. Quy ước `cic-insdn-families-v1` có 10 nhóm khai báo; model hiện học 9 nhóm, Heartbleed 11 mẫu bị loại dưới ngưỡng 15. [LABEL_TAXONOMY.md](LABEL_TAXONOMY.md) ghi bảng ánh xạ và nguồn đối chiếu. CSV InSDN tại máy chỉ có 6 nhãn; BOT/WEB_ATTACK/INFILTRATION chỉ có CIC, U2R chỉ có InSDN.
+
+Lượt chính thức của nhánh này: `multiclass-families-seed7`, `multiclass-families-seed21`, `multiclass-families-seed42`, cùng cap 2.000 mỗi nhóm/mỗi nguồn, 60 cây, 3 folds, baseline tuning và 12 lựa chọn meta. `multiclass-families-summary` có 90 hàng kết quả và mean/SD. Các thư mục `multiclass-combined-seed*` là lượt kiểm tra trước khi cố định scope Macro-F1; không dùng chúng thay bảng dưới.
+
+Macro-F1 dưới đây dùng tập lớp có ground truth trong từng test, cố định cho mọi thuật toán; report đầy đủ còn có các lớp support 0. Đây là mean ± SD mẫu qua ba seed, không phải khoảng tin cậy. Baseline cao nhất theo mean là mô tả kết quả test, không được dùng để chọn stack.
+
+| Cấu hình | Test | ES Macro-F1 mean ± SD | Baseline cao nhất theo mean | ES − baseline |
+|---|---|---:|---|---:|
+| M1 | cicids2017 | 96.338 ± 0.278% | xgb: 96.183% | +0.155 điểm % |
+| M2 | insdn | 93.817 ± 3.518% | lgbm: 94.734% | -0.917 điểm % |
+| M3 | cicids2017 | 96.473 ± 0.288% | xgb: 96.361% | +0.112 điểm % |
+| M3 | combined | 94.409 ± 2.578% | rf: 94.467% | -0.058 điểm % |
+| M3 | insdn | 93.480 ± 4.121% | rf: 95.055% | -1.574 điểm % |
+
+ES nhỉnh hơn mean baseline trên test CIC theo nhóm; trên InSDN và test gộp vẫn thấp hơn. Chưa đáp ứng kết luận ES vượt baseline trên cả hai nguồn. Không so điểm này trực tiếp với CIC 14 subtype hoặc InSDN 6 nhãn cũ vì taxonomy/sampling/split đã thay đổi. Ba seed phát triển không thay thế kiểm định trên holdout mới tách theo phiên/thời gian.
+
+Seed 42 M3 có 9 lớp, test CIC 2.288 flow, InSDN 1.097 flow, test gộp 3.385 flow. Accuracy gộp 97,578%, Macro-F1 94,608%. Chỉ có 7 mẫu INFILTRATION và 3 mẫu U2R trong test: kết quả lớp hiếm còn dao động lớn. Source test giữ hash giống M1/M2 trong cùng lượt; hash giữa các thí nghiệm khác taxonomy không được coi là tương đương.
+
+Model dùng ngay: `multiclass-families-seed42/M3/models/stacking_ids.joblib`, chọn seed cố định 42 thay vì seed có test tốt nhất. Đã nạp lại model, smoke match 100%, chấm lại toàn bộ hai test bằng `evaluate_model.py` và đối chiếu khớp số liệu train. Snapshot notebook `training_combined.ipynb` đã chạy 8 cell code, hiển thị mapping/support, xác minh split và confusion 9 lớp. Bộ test hiện có 53 kiểm tra đều qua.
+
+Phần kết hợp đa lớp hiện hoàn thành ở mức offline theo nhóm. Chưa chứng minh taxonomy đã được đánh giá độc lập, extractor parity hay độ chính xác realtime trên Linux của model mới.
+
+## Cập nhật gói VM 9 nhóm và rà soát Stacking
+
+Đã dựng `deliverables/ids-vm-multiclass-combined-seed42.zip`: 32 file, có SHA256SUMS cho 31 payload file. Model, taxonomy và code suy luận/chấm điểm đồng bộ với nhánh đa lớp kết hợp, thay vì dùng nhầm ZIP M3 nhị phân. Giải nén vào thư mục tách biệt, hai smoke đều match 100% và nạp model chấm lại hai full test khớp Accuracy/Macro-F1/Weighted-F1/FPR/FNR gốc. Replay PCAP tổng hợp ghép đúng 1 flow chỉ dùng làm self-check, không là kết quả lab thật.
+
+Tool lab hỗ trợ `--model`, `--truth-source` và `--binary-only`, từ chối nhãn không thuộc model nếu chấm đa lớp. Full CICFlowMeter reference có thể chuẩn hóa để đối chiếu parity với format/timezone rõ và checksum PCAP/CSV; chưa có reference/capture thật để xác nhận pass. Hiện có 58 test đều qua.
+
+[STACKING_AUDIT.md](STACKING_AUDIT.md) chỉ từng vị trí code tương ứng lý thuyết, xác nhận artifact RF+XGB+LR → meta LR có 27 cột xác suất cho 9 lớp và phân tích phần lớn chênh lệch InSDN đến từ U2R hiếm. [VM_DEPLOYMENT.md](VM_DEPLOYMENT.md) hướng dẫn gói mới; [FEATURE_PARITY.md](FEATURE_PARITY.md) là bước kiểm chứng còn cần thực hiện trên capture thật. Không tự train lại hoặc thay số liệu ES để tạo kết luận vượt baseline.
+
+## Kết quả lab HTTP do người dùng cung cấp
+
+Người dùng đã chạy được detector trên Kali thật và gửi log/CSV của 10 kết nối curl Windows → Kali:8080. Replay ghép đủ 10 flow, cả 10 nhãn thật BENIGN bị dự đoán BRUTE_FORCE: Accuracy=0%, FPR=100% trên chính lượt này; chưa có attack nên FNR=null. Đây là bằng chứng pipeline chạy trên Linux và một thất bại về chất lượng phát hiện, không phải độ chính xác chung của mọi traffic.
+
+Đã tái hiện 10 nhãn và các điểm dự đoán bằng artifact giữ nguyên trên Windows. RF nhận cả 10 là BENIGN; XGB/LR base và meta nhận BRUTE_FORCE. Các cột flag lab FIN=2/SYN=2/PSH=3/ACK=9 ngoài miền 0/1 của development. Nghiên cứu CIC-IDS2017 xác nhận ngữ nghĩa flag cũ chỉ cập nhật packet đầu, trong khi extractor hiện cộng toàn flow. Chuyển đơn giản thành presence hoặc chỉ giả định flag gói đầu vẫn không giải quyết các dự đoán sai; cần PCAP để đối chiếu ranh giới/định nghĩa đầy đủ.
+
+Chi tiết và giới hạn tại [LIVE_DIAGNOSIS.md](LIVE_DIAGNOSIS.md). Chưa thay model/runtime hoặc sửa số liệu để ép lượt BENIGN thành công; chưa nhận PCAP gốc. Các ghi chú chưa có Linux thật ở những mục trước mô tả thời điểm chuẩn bị gói, không thay thế bằng chứng người dùng mới gửi này.
+
+## PCAP thật và bản sửa payload v2
+
+Đã nhận benign02.pcap: 100 TCP packet, 10 kết nối GET/HTTP 200, tái trích runtime cũ khớp CSV người dùng. Phát hiện code cộng Ethernet padding vào TCP payload: chiều gửi 102 thay vì 84 byte. Đã sửa theo network/header lengths; log và CSV ghi version `scapy-ip-payload-v2`, log giữ 12 feature đầu vào. 62 test đều qua.
+
+Replay cùng PCAP sau sửa cho 10 flow, payload 84/199 byte nhưng vẫn 10 BRUTE_FORCE, FPR=100% trên lượt BENIGN này. Do đó bản sửa byte chưa sửa được độ chính xác model. Không dùng chia nhỏ flow để đổi mẫu số tạo điểm tốt hơn. Chi tiết và hướng dữ liệu/holdout tiếp theo ở LIVE_DIAGNOSIS.md; gói runtime riêng `ids-vm-multiclass-combined-seed42-padding-v2.zip` giữ nguyên model.
+
+## M3 đa lớp với RF, XGBoost và LightGBM
+
+Chạy lại M1/M2/M3 trên CIC-IDS2017 và InSDN với seed 7, 21, 42. M3 cố định RF, XGBoost và LightGBM ở tầng base, giữ Logistic Regression ở tầng meta. Cờ `--stack-search` chọn 6 cặp C/class weight bằng Macro-F1 validation. M1, M2 và nhánh nhị phân giữ quy tắc chọn stack trước đó. Đã đối chiếu hash cả sáu split ở mỗi seed với lượt đa lớp cũ. Các bảng và model mới nằm trong `experiments/m3-trees/`.
+
+| Test M3 | Macro-F1 cũ | Macro-F1 mới, mean ± SD | Baseline tốt nhất theo mean |
+|---|---:|---:|---:|
+| CIC-IDS2017 | 96,473% | 96,908 ± 0,704% | XGBoost 96,361% |
+| InSDN | 93,480% | 94,670 ± 2,433% | RF 95,055% |
+| Gộp | 94,409% | 95,112 ± 2,447% | RF 94,467% |
+
+M3 seed 42 chọn C=10, `class_weight=None`. Trên test gộp 3.385 flow, Accuracy đạt 97,637% và Macro-F1 đạt 94,788%. Seed 42 dùng cho gói Kali theo quy ước trước đó. Replay PCAP HTTP chẩn đoán cho 9 BENIGN và 1 U2R, so với 10 BRUTE_FORCE của M3 cũ. FPR giảm từ 100% xuống 10% trên chính capture này. Các tập test và PCAP đã được dùng trong quá trình phát triển. Cần capture độc lập có cả BENIGN và attack để đo FPR, Recall và độ trễ live.
+
+```powershell
+foreach ($seed in @(7, 21, 42)) {
+    .\.venv\Scripts\python.exe src/train_all.py --combined --multiclass --out "experiments/m3-trees/seed$seed" --max-per-class 2000 --trees 60 --folds 3 --seed $seed --tune --stack-search
+}
+.\.venv\Scripts\python.exe src/summarize.py --runs experiments/m3-trees/seed7 experiments/m3-trees/seed21 experiments/m3-trees/seed42 --out experiments/m3-trees/summary
+.\.venv\Scripts\python.exe src/package_vm.py
+```

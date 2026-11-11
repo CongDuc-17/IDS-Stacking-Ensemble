@@ -8,15 +8,15 @@ Ngày 10/11/2026 đã bổ sung test gộp, host features, Gaussian anomaly và 
 
 [REPORT.md](docs/REPORT.md) cung cấp bản nội dung Chương 1–3, kết luận và nguồn tham khảo để đưa vào mẫu Word. Các bảng số liệu chi tiết nằm trong CURRENT_RESULTS.md.
 
-Đưa model đã huấn luyện lên Kali VM: [hướng dẫn triển khai từng bước](docs/VM_DEPLOYMENT.md), từ mạng Host-only, chuyển gói M3, cài môi trường đến kiểm tra CSV và bắt traffic live.
+Đưa **M3 đa lớp kết hợp 9 nhóm** lên Kali VM: [hướng dẫn triển khai từng bước](docs/VM_DEPLOYMENT.md), từ mạng Host-only, chuyển gói M3, cài môi trường đến kiểm tra CSV và bắt traffic live.
 
 [Kiểm chứng trên Windows](docs/WINDOWS_VALIDATION.md) có lệnh đánh giá bằng nhãn thật, phân tích beaconing và so sánh dữ liệu gộp với cùng cỡ mẫu. Người dùng đã capture HTTP localhost thành công bằng Administrator; lần agent trước đó bị Admin-only Mode từ chối vẫn được giữ như lịch sử, chưa có attack lab hoặc kết quả Kali thật.
 
-[STACKING_SCOPE.md](docs/STACKING_SCOPE.md) chốt phần ES chính và các nhánh mở rộng. Đã chạy meta-search đa lớp đủ ba seed trên cả hai nguồn; ES chưa vượt baseline. [notebooks/training.ipynb](notebooks/training.ipynb) hỗ trợ huấn luyện theo bước, mặc định chỉ đọc artifact; hướng dẫn demo gọi tên subtype ở [MULTICLASS_DEMO.md](docs/MULTICLASS_DEMO.md).
+[STACKING_SCOPE.md](docs/STACKING_SCOPE.md) chốt phần ES chính và các nhánh mở rộng. Đã chạy meta-search đa lớp riêng từng nguồn đủ ba seed; ES chưa vượt baseline trong các lượt riêng đó. Đã bổ sung M3 đa lớp theo nhóm chung; xem [taxonomy và cách chạy](docs/LABEL_TAXONOMY.md). [notebooks/training.ipynb](notebooks/training.ipynb) hỗ trợ huấn luyện theo bước, mặc định chỉ đọc artifact; hướng dẫn demo gọi tên subtype ở [MULTICLASS_DEMO.md](docs/MULTICLASS_DEMO.md).
 
 ## Xem theo cell trong notebook
 
-Notebook huấn luyện kết hợp: [notebooks/training_combined.ipynb](notebooks/training_combined.ipynb). Chạy M1/M2/M3 bằng pipeline chung, xác minh dữ liệu gộp và test chung; DO_TRAIN mặc định False để xem kết quả, đổi True và OUT mới để huấn luyện thật. Bài toán kết hợp hiện là BENIGN/ATTACK.
+Notebook huấn luyện kết hợp: [notebooks/training_combined.ipynb](notebooks/training_combined.ipynb). Chạy M1/M2/M3 bằng pipeline chung, xác minh dữ liệu gộp và test chung; DO_TRAIN mặc định False để xem kết quả, đổi True và OUT mới để huấn luyện thật. Notebook mặc định đa lớp theo nhóm chung (`MULTICLASS=True`); chọn False để chạy BENIGN/ATTACK. Bảng ánh xạ, phạm vi 9 nhóm và lệnh chạy tại [LABEL_TAXONOMY.md](docs/LABEL_TAXONOMY.md).
 
 Mở [notebooks/experiment.ipynb](notebooks/experiment.ipynb) để xem bảng, biểu đồ EDA, mean/SD, confusion matrix, đa lớp, Gaussian và graph. Notebook đọc artifact đã lưu; Run All không tự huấn luyện lại. Logic train vẫn dùng chung trong `src/*.py`.
 
@@ -158,3 +158,5 @@ Kiểm tra lại model M3 đã lưu bằng CSV, không cần thư viện bắt g
 ## Giới hạn
 
 Class cap và khử trùng thay đổi phân bố nhãn. Random split chưa bảo đảm tách phiên/thời gian; điểm trên mẫu chưa đại diện cho traffic thực tế. Tuning trước OOF không phải nested CV đầy đủ. Cùng tên cột sau ánh xạ chưa chứng minh cùng ngữ nghĩa extractor giữa hai dataset. M3 có nhiều dữ liệu hơn M1/M2 và đã thấy cả hai miền trong train. Thời gian suy luận batch chưa phải độ trễ phát hiện live. Xem kết quả và giới hạn hiện hành trong `docs/CURRENT_RESULTS.md`.
+
+Gói VM M3 9 nhóm dùng RF + XGBoost + LightGBM ở tầng base và Logistic Regression ở tầng meta: `deliverables/ids-vm-multiclass-combined-seed42-trees.zip`; dựng bằng `src/package_vm.py`. Đối chiếu khái niệm Stacking với code và kết quả rà soát tại [STACKING_AUDIT.md](docs/STACKING_AUDIT.md); quy trình kiểm chứng extractor tại [FEATURE_PARITY.md](docs/FEATURE_PARITY.md).

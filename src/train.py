@@ -49,16 +49,18 @@ def pipeline(name, model):
     return make_pipeline(*steps, model)
 
 
-def evaluate(name, fitted, x, y, classes, folder, fit_seconds):
+def evaluate(name, fitted, x, y, classes, folder, fit_seconds, *, metric_labels=None):
     start = time.perf_counter()
     pred = fitted.predict(x)
     elapsed = time.perf_counter() - start
     summary = {
         "accuracy": float(accuracy_score(y, pred)),
-        "macro_f1": float(f1_score(y, pred, average="macro", zero_division=0)),
+        "macro_f1": float(f1_score(y, pred, labels=metric_labels, average="macro", zero_division=0)),
         "weighted_f1": float(f1_score(y, pred, average="weighted", zero_division=0)),
         "fit_seconds_final_refit": fit_seconds, "batch_predict_ms_per_flow": elapsed * 1000 / len(y),
     }
+    if metric_labels is not None:
+        summary["macro_f1_classes_in_truth"] = list(classes[metric_labels])
     if "BENIGN" in classes:
         benign = int(np.flatnonzero(classes == "BENIGN")[0])
         normal, attack = y == benign, y != benign
@@ -129,7 +131,7 @@ def main():
     run_experiment(args, train, val, dev, test, metadata, external_metadata, removed)
 
 
-def run_experiment(args, train, val, dev, test, metadata, external_metadata=None, removed=0):
+def run_experiment(args, train, val, dev, test, metadata, external_metadata=None, removed=0, *, stack_variant=None):
     """Refit once and evaluate a DataFrame or named tests; retain the single-test API."""
     root = Path(args.out)
     if (root / "protocol.json").exists() or (root / "comparison.json").exists():
@@ -163,6 +165,10 @@ def run_experiment(args, train, val, dev, test, metadata, external_metadata=None
     cv = StratifiedKFold(args.folds, shuffle=True, random_state=args.seed)
     chosen, selection, validation_proba = {}, {}, {}
     stack_search = getattr(args, "stack_search", False)
+    variants = {"trees": ["rf", "xgb", "lgbm"], "diverse": ["rf", "xgb", "lr"]}
+    if stack_variant is not None:
+        variants = {stack_variant: variants[stack_variant]}
+    stack_bases = dict.fromkeys(name for names in variants.values() for name in names)
     experiment_start = time.perf_counter()
     for name, (model, grid) in estimators(args.trees, args.seed).items():
         print(f"Selecting baseline {name}...", flush=True)
@@ -183,23 +189,23 @@ def run_experiment(args, train, val, dev, test, metadata, external_metadata=None
             selection[name] = {"best_parameters": "fixed; tuning disabled"}
         selection[name]["validation_macro_f1"] = float(f1_score(y_val, candidate.predict(x_val), average="macro"))
         chosen[name] = clone(candidate)
-        if stack_search and name != "dt":
+        if stack_search and name in stack_bases:
             validation_proba[name] = candidate.predict_proba(x_val)
     oof = {}
     if stack_search:
-        for name in ("rf", "xgb", "lgbm", "lr"):
+        for name in stack_bases:
             print(f"Training-only OOF probabilities: {name}...", flush=True)
             oof[name] = cross_val_predict(chosen[name], x_train, y_train, cv=cv, method="predict_proba", n_jobs=1)
         np.savez_compressed(root / "stack_oof.npz", **oof, y_train=y_train)
     stack_candidates = {}
-    for variant, names in {"trees": ["rf", "xgb", "lgbm"], "diverse": ["rf", "xgb", "lr"]}.items():
+    for variant, names in variants.items():
         print(f"Selecting OOF stack: {variant}...", flush=True)
         meta_grid = [(c, weight) for c in (.1, 1., 10.) for weight in (None, "balanced")] if stack_search else [(1., "balanced")]
         for c, weight in meta_grid:
             meta = LogisticRegression(C=c, class_weight=weight, max_iter=3000)
             candidate = StackingClassifier(
                 estimators=[(n, clone(chosen[n])) for n in names], final_estimator=clone(meta),
-                cv=cv, stack_method="predict_proba", n_jobs=1,
+                cv=cv, stack_method="predict_proba", passthrough=False, n_jobs=1,
             )
             if stack_search:
                 # Match StackingClassifier: drop the first probability column for binary tasks.
@@ -229,7 +235,8 @@ def run_experiment(args, train, val, dev, test, metadata, external_metadata=None
         fitted_seconds = time.perf_counter() - start
         for test_name, (x_test, y_test, test_root) in test_inputs.items():
             all_scores[test_name][name], all_predictions[test_name][name] = evaluate(
-                name, candidate, x_test, y_test, encoder.classes_, test_root, fitted_seconds)
+                name, candidate, x_test, y_test, encoder.classes_, test_root, fitted_seconds,
+                metric_labels=np.unique(y_test) if "label_taxonomy" in metadata else None)
         if name == "stacking":
             model_dir = root / "models"
             model_dir.mkdir(exist_ok=True)
@@ -239,6 +246,8 @@ def run_experiment(args, train, val, dev, test, metadata, external_metadata=None
                         "feature_extractor": "dataset-cicflowmeter",
                         "python_version": platform.python_version(),
                         "training_note": "Offline sampled reference; live traffic accuracy has not been validated."}
+            if "label_taxonomy" in metadata:
+                artifact["label_taxonomy"] = metadata["label_taxonomy"]
             joblib.dump(artifact, model_dir / "stacking_ids.joblib", compress=3)
             write_json(model_dir / "features.json", FEATURES)
             packages = ["numpy", "pandas", "scipy", "scikit-learn", "xgboost", "lightgbm", "joblib"]

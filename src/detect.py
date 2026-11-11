@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from dataset import column_name, numeric_features
 from features import FEATURES
-from flows import FlowTable
+from flows import EXTRACTOR_VERSION, FlowTable
 
 
 class FlowDetector:
@@ -42,6 +42,7 @@ class FlowDetector:
             "predicted_label": label, "is_attack": is_attack,
             "model_score_uncalibrated": float(proba[index]), "inference_ms": inference_ms,
             "experimental_feature_parity_unvalidated": True,
+            "flow_extractor_version": EXTRACTOR_VERSION, "feature_values": row,
             "observed_first_packet_to_result_seconds": max(0, time.time() - meta["flow_first_epoch"]) if self.live else None,
         }
         self.total_flows += 1

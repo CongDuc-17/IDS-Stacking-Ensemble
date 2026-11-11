@@ -35,7 +35,8 @@ def evaluate_model(model_path, csv_path, out, label_column="Label"):
         raise ValueError("CSV contains rows with no usable feature values.")
     y = labels.map({label: i for i, label in enumerate(classes)}).to_numpy(dtype=int)
     root.mkdir(parents=True)
-    summary, predicted = evaluate("stacking", artifact["model"], x, y, classes, root, fit_seconds=None)
+    summary, predicted = evaluate("stacking", artifact["model"], x, y, classes, root, fit_seconds=None,
+                                  metric_labels=np.unique(y) if "label_taxonomy" in artifact else None)
     results = x.copy()
     results["GroundTruth"] = labels.to_numpy()
     results["Prediction"] = classes[predicted]

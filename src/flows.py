@@ -7,6 +7,7 @@ from collections import OrderedDict
 import math
 
 FLAGS = (("FIN", 1), ("SYN", 2), ("RST", 4), ("PSH", 8), ("ACK", 16), ("URG", 32))
+EXTRACTOR_VERSION = "scapy-ip-payload-v2"
 
 
 class FlowTable:
@@ -41,6 +42,18 @@ class FlowTable:
             return
         transport = pkt[TCP] if TCP in pkt else pkt[UDP]
         protocol = "TCP" if TCP in pkt else "UDP"
+        if ip.len is None or ip.ihl is None or (protocol == "TCP" and transport.dataofs is None) or (protocol == "UDP" and transport.len is None):
+            ip = IP(bytes(ip))
+            transport = ip[TCP] if protocol == "TCP" else ip[UDP]
+        transport_header = int(transport.dataofs) * 4 if protocol == "TCP" else 8
+        payload_limit = int(ip.len) - int(ip.ihl) * 4 - transport_header
+        if protocol == "UDP":
+            payload_limit = min(payload_limit, int(transport.len) - 8)
+        if int(ip.ihl) < 5 or transport_header < (20 if protocol == "TCP" else 8) or payload_limit < 0:
+            self.unsupported_packets += 1
+            return
+        # Scapy may attach Ethernet padding under TCP/UDP.payload; honor network lengths.
+        payload_size = min(len(bytes(transport.payload)), payload_limit)
         src, dst = (ip.src, int(transport.sport)), (ip.dst, int(transport.dport))
         key = (protocol, *sorted((src, dst)))
         # Expire BEFORE adding the next packet of an old connection.
@@ -58,7 +71,7 @@ class FlowTable:
         flow = self.flows[key]
         forward = src == flow["src"] and dst == flow["dst"]
         flow["fwd" if forward else "bwd"] += 1
-        flow["fwd_bytes" if forward else "bwd_bytes"] += len(bytes(transport.payload))
+        flow["fwd_bytes" if forward else "bwd_bytes"] += payload_size
         if TCP in pkt:
             for name, mask in FLAGS:
                 flow["flags"][name] += int(bool(int(pkt[TCP].flags) & mask))
