@@ -12,12 +12,11 @@ import pandas as pd
 from scapy.all import IP, TCP, UDP, ICMP, Raw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from dataset import ALIASES, read_sample, numeric_features
+from dataset import numeric_features
 from detect import FlowDetector, csv_smoke, live_capture, validate_artifact
 from evaluate_lab import evaluate
 from features import FEATURES
 from flows import FlowTable
-from train import split_data
 
 
 class FixedModel:
@@ -37,33 +36,6 @@ def packet(t, reverse=False, sport=1234, flags="S"):
 
 
 class PipelineTests(unittest.TestCase):
-    def test_sampling_aliases_missing_conflicts_deterministic(self):
-        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as tmp:
-            rows = []
-            for label, offset in [("Normal", 0), ("Probe", 1000)]:
-                for n in range(40):
-                    rows.append(dict(zip(FEATURES, [n + offset, 100, 1, 0, 3, 0, 0, 1, 0, 0, 0, 0]), Label=label))
-            # A contradictory label on an identical vector must not leak across splits.
-            rows.append({**rows[0], "Label": "Probe"})
-            rows.append({**rows[1], "Label": None})
-            df = pd.DataFrame(rows).rename(columns={v: k for k, v in ALIASES.items()})
-            df.to_csv(Path(tmp) / "insdn.csv", index=False)
-            sample, meta = read_sample(tmp, 100, 42)
-            repeated, _ = read_sample(tmp, 100, 42)
-            pd.testing.assert_frame_equal(sample, repeated)
-            self.assertEqual(meta["raw_class_counts"], {"Normal": 40, "Probe": 41})
-            self.assertEqual(meta["invalid_labels"], 1)
-            self.assertEqual(meta["sample_conflicting_rows_removed"], 2)
-            self.assertFalse(sample[FEATURES].duplicated().any())
-            train, val, dev, test, _ = split_data(sample, 42)
-            self.assertEqual(len(train) + len(val) + len(test), len(sample))
-            # Independent holdout overlap must be purged even when numeric CSV dtypes differ.
-            external = sample.groupby("Label").head(2).copy()
-            external[FEATURES] = numeric_features(external)
-            _, _, purged, _, removed = split_data(sample, 42, external)
-            self.assertEqual(removed, 4)
-            self.assertEqual(len(purged), len(sample) - 4)
-
     def test_nonfinite_numeric(self):
         frame = pd.DataFrame([[1] * len(FEATURES)], columns=FEATURES)
         frame["Flow Duration"] = np.inf

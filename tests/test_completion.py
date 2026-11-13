@@ -1,4 +1,4 @@
-"""Saved-model truth scoring, periodic-flow candidates and size-controlled experiments."""
+"""Saved-model truth scoring and periodic-flow candidates."""
 import contextlib
 import io
 import json
@@ -19,10 +19,6 @@ sys.path.insert(0, str(ROOT / "src"))
 from beaconing import analyze_beaconing, main as beaconing_main
 from evaluate_model import evaluate_model
 from features import FEATURES
-from size_ablation import CONFIGURATIONS, load_splits, matched_development, run_size_ablation
-from three_models import prepare_splits, run_three_models
-from test_three_models import sample, tiny_estimators
-from argparse import Namespace
 
 
 class SavedModelTests(unittest.TestCase):
@@ -125,49 +121,3 @@ class BeaconingTests(unittest.TestCase):
             self.assertEqual(summary["input_flows"], 7)
             with patch.object(sys, "argv", argv), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 beaconing_main()
-
-
-class SizeAblationTests(unittest.TestCase):
-    def test_equal_class_budgets_and_mixed_source_shares(self):
-        splits, _ = prepare_splits(sample(0), sample(10000))
-        matched, budgets = matched_development(splits, 7)
-        again, _ = matched_development(splits, 7)
-        for name in CONFIGURATIONS:
-            for part in ("train", "validation"):
-                frame = matched[name][part]
-                self.assertEqual(frame.Label.value_counts().to_dict(), budgets[part])
-                pd.testing.assert_frame_equal(frame, again[name][part])
-                for source in ("cicids2017", "insdn"):
-                    if name == "Mixed_matched":
-                        self.assertEqual(frame.loc[frame.source_dataset.eq(source)].Label.value_counts().to_dict(),
-                                         {label: n//2 for label, n in budgets[part].items()})
-
-    def test_ablation_exports_unmodified_tests_and_rejects_changed_splits(self):
-        with tempfile.TemporaryDirectory(dir=ROOT / "tests") as tmp:
-            root = Path(tmp)
-            sample(0).to_csv(root / "cic.csv", index=False)
-            sample(10000).to_csv(root / "insdn.csv", index=False)
-            args = Namespace(cic_data=str(root / "cic.csv"), insdn_data=str(root / "insdn.csv"),
-                             out=str(root / "source"), max_per_class=100, trees=2, seed=7, folds=2, tune=False, combined=True)
-            with patch("train.estimators", side_effect=tiny_estimators), contextlib.redirect_stdout(io.StringIO()):
-                run_three_models(args)
-                rows = run_size_ablation([root / "source"], root / "ablation")
-            self.assertEqual(len(rows), 54)
-            self.assertTrue((root / "ablation/completed.json").exists())
-            source = json.loads((root / "source/M3/protocol.json").read_text())
-            for name in CONFIGURATIONS:
-                result = json.loads((root / f"ablation/seed7/{name}/protocol.json").read_text())
-                self.assertEqual(result["split_feature_sha256"]["combined"], source["split_feature_sha256"]["combined"])
-            with self.assertRaisesRegex(ValueError, "Repeated seed"):
-                run_size_ablation([root / "source", root / "source"], root / "bad")
-            self.assertFalse((root / "bad").exists())
-            path = root / "source/splits/cicids2017/test.csv"
-            frame = pd.read_csv(path)
-            frame.loc[0, "Destination Port"] += 1
-            frame.to_csv(path, index=False)
-            with self.assertRaisesRegex(ValueError, "Changed"):
-                load_splits(root / "source")
-
-
-if __name__ == "__main__":
-    unittest.main()

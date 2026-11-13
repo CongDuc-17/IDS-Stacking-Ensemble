@@ -1,4 +1,4 @@
-"""Build named PCAP experiments from a plan of labeled capture sessions."""
+"""Prepare the CIC-IDS2017/InSDN PCAP session splits used by the final refit."""
 
 import argparse
 from collections import Counter
@@ -11,17 +11,16 @@ import sys
 import numpy as np
 import pandas as pd
 
-from dataset import numeric_features
+from dataset import SOURCES, feature_hashes, numeric_features
 from features import FEATURES
 from flows import EXTRACTOR_VERSION
 from match_capture_labels import endpoints, reference_index
 from taxonomy import label_key, manifest, map_labels
-from three_models import SOURCES, feature_hashes, fit_model_runs
-from train import write_json
 
 
 PARTS = ("train", "validation", "test")
-NAMES = ("PCAP-CIC", "PCAP-InSDN", "PCAP-Combined")
+SEED = 42
+CLASS_CAP = 2000
 CONTRACT = {"version": EXTRACTOR_VERSION, "idle": 10.0, "max_age": 60.0, "max_flows": 10000}
 
 
@@ -32,13 +31,19 @@ def epoch(value):
     return time.timestamp()
 
 
-def validate_plan(plan):
+def validate_plan(plan, reuse_extracted=False):
     seen = set()
     ranges = {}
     for case in plan:
         session, capture = case["id"], Path(case["pcap"]).resolve()
+        inputs = [Path(case["cached_flows"])] if reuse_extracted and "cached_flows" in case else [capture]
+        if "reference" in case:
+            inputs.append(Path(case["reference"]))
+        for path in inputs:
+            if not path.is_file():
+                raise FileNotFoundError(f"{session}: missing input {path}")
         if (not session or Path(session).name != session or session in {".", ".."} or session in seen or
-                case["source"] not in SOURCES or case["split"] not in PARTS or not capture.is_file()):
+                case["source"] not in SOURCES or case["split"] not in PARTS):
             raise ValueError(f"Invalid or duplicate session: {session}")
         seen.add(session)
         start, stop = map(epoch, case["window"]) if "window" in case else (-np.inf, np.inf)
@@ -121,7 +126,7 @@ def collect_sessions(plan, out, cache):
     return result
 
 
-def partition(data, cap, seed):
+def partition(data, cap=CLASS_CAP, seed=SEED):
     data = data.copy()
     for source in SOURCES:
         mask = data.source_dataset.eq(source)
@@ -158,50 +163,38 @@ def partition(data, cap, seed):
     return splits
 
 
+def prepare(plan_path, out, reuse_extracted=False):
+    out = Path(out)
+    plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
+    validate_plan(plan, reuse_extracted)
+    out.mkdir(parents=True)
+    data = collect_sessions(plan, out, reuse_extracted)
+    splits = partition(data)
+    for source, parts in splits.items():
+        folder = out / "splits" / source
+        folder.mkdir(parents=True)
+        for part, frame in parts.items():
+            frame.to_csv(folder / f"{part}.csv", index=False)
+        data.loc[data.source_dataset.eq(source)].to_csv(out / f"{source}-labeled.csv", index=False)
+    protocol = {
+        "flow_contract": CONTRACT, "label_taxonomy": manifest(), "seed": SEED,
+        "max_per_source_family_train": CLASS_CAP, "reuse_extracted": reuse_extracted,
+        "sessions": plan,
+    }
+    (out / "protocol.json").write_text(json.dumps(protocol, indent=2) + "\n", encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--plan", required=True)
-    parser.add_argument("--out", required=True, help="New experiment directory")
-    parser.add_argument("--reuse-extracted", action="store_true", help="Use the extracted CSV paths recorded in the plan")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--folds", type=int, default=2)
-    parser.add_argument("--trees", type=int, default=60)
-    parser.add_argument("--max-per-class", type=int, default=2000)
+    parser.add_argument("--plan", default="configs/pcap_sessions_20261112.json")
+    parser.add_argument("--out", required=True, help="New output directory")
+    parser.add_argument("--reuse-extracted", action="store_true",
+                        help="Reuse the extracted flow CSVs recorded in the plan")
     args = parser.parse_args()
-    if args.folds < 2 or args.trees < 1 or args.max_per_class < 15:
-        parser.error("Require at least two folds, one tree and 15 rows per class cap.")
-    args.combined = args.multiclass = args.tune = args.stack_search = True
-    out = Path(args.out)
-    plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
-    validate_plan(plan)
-    out.mkdir(parents=True)
-    write_json(out / "session_plan.json", plan)
-    data = collect_sessions(plan, out, args.reuse_extracted)
-    splits = partition(data, args.max_per_class, args.seed)
-    inputs, mappings = [], []
-    support = {}
-    for source, parts in splits.items():
-        subset = data.loc[data.source_dataset.eq(source)]
-        path = out / f"{source}-labeled.csv"
-        subset.to_csv(path, index=False)
-        inputs.append(path)
-        raw = subset.RawLabel.value_counts()
-        for label, count in raw.items():
-            mappings.append({"source_dataset": source, "raw_label": label,
-                             "family": map_labels(pd.Series([label]), source).iloc[0], "raw_rows": count})
-        support[source] = pd.concat(list(parts.values())).Label.value_counts()
-        subprocess.run([sys.executable, str(Path(__file__).with_name("eda.py")), "--data", str(path),
-                        "--out", str(out / "eda" / source), "--seed", str(args.seed),
-                        "--max-per-class", str(args.max_per_class)], check=True)
-    pd.DataFrame(mappings).to_csv(out / "label_mapping.csv", index=False)
-    pd.DataFrame(support).fillna(0).astype(int).to_csv(out / "family_support.csv", index_label="family")
-    protocol = {"arguments": vars(args), "configuration_names": list(NAMES),
-                "pooled_configuration": NAMES[-1], "task": "multiclass attack families",
-                "label_taxonomy": manifest(), "m3_stack_variant": "trees", "flow_contract": CONTRACT,
-                "protocol": "Declared sessions and time blocks, grouped OOF, identical held-out rows for all algorithms.",
-                "session_support": {source: {part: frame.groupby("session_id").Label.value_counts().unstack(fill_value=0).to_dict(orient="index")
-                                             for part, frame in parts.items()} for source, parts in splits.items()}}
-    fit_model_runs(args, splits, protocol, inputs)
+    try:
+        prepare(args.plan, args.out, args.reuse_extracted)
+    except (FileNotFoundError, FileExistsError, ValueError) as error:
+        parser.exit(1, f"Error: {error}\n")
 
 
 if __name__ == "__main__":

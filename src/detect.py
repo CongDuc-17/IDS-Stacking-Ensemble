@@ -1,4 +1,4 @@
-"""CSV reproducibility check or experimental PCAP/live IPv4 TCP/UDP detector."""
+"""Check saved predictions, replay a PCAP, or capture IPv4 TCP/UDP live."""
 import argparse
 from datetime import datetime, timezone
 import json
@@ -101,7 +101,7 @@ def live_capture(detector, iface, queue_size, capture_filter=None):
     sniffer.start()
     try:
         if not ready.wait(10):
-            raise RuntimeError("Capture failed to start. Check interface, permissions and libpcap.")
+            raise RuntimeError("Capture failed to start. Check the interface and capture permissions (Npcap on Windows, libpcap on Linux).")
         print(f"Capturing {iface}; Ctrl+C to stop.", flush=True)
         last_flush = time.monotonic()
         while sniffer.running:
@@ -130,11 +130,12 @@ def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--model", default="models/stacking_ids.joblib")
+    ap.add_argument("--model", default="experiments/pcap-combined-refit-seed42/PCAP-Combined-Refit.joblib")
     group = ap.add_mutually_exclusive_group(required=True)
     group.add_argument("--csv")
     group.add_argument("--pcap")
     group.add_argument("--iface")
+    group.add_argument("--list-ifaces", action="store_true", help="Show the interfaces Scapy can use")
     ap.add_argument("--out", default="logs", help="Output directory; predictions.jsonl must not already exist")
     ap.add_argument("--idle", type=float, default=10)
     ap.add_argument("--max-age", type=float, default=60)
@@ -142,6 +143,10 @@ def main():
     ap.add_argument("--queue-size", type=int, default=10000)
     ap.add_argument("--capture-filter", help="Additional BPF scope for live capture, e.g. 'host 192.168.56.1'")
     args = ap.parse_args()
+    if args.list_ifaces:
+        from scapy.all import show_interfaces
+        show_interfaces()
+        return
     if args.queue_size < 1:
         ap.error("--queue-size must be positive.")
     artifact = joblib.load(args.model)  # Load ONLY your own trusted model files.
@@ -165,7 +170,10 @@ def main():
         if detector.flow_table.flows:
             detector.flow_table.flush(detector.flow_table.watermark, force=True)
     else:
-        live_capture(detector, args.iface, args.queue_size, args.capture_filter)
+        try:
+            live_capture(detector, args.iface, args.queue_size, args.capture_filter)
+        except (OSError, ValueError, RuntimeError) as error:
+            ap.exit(1, f"Capture error on {args.iface}: {error}\n")
     print(f"flows={detector.total_flows}; alerts={detector.alerts}; capacity_evictions={detector.flow_table.capacity_evictions}; unsupported_packets={detector.flow_table.unsupported_packets}")
 
 
