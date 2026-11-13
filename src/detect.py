@@ -17,6 +17,10 @@ from flows import EXTRACTOR_VERSION, FlowTable
 
 class FlowDetector:
     def __init__(self, artifact, out_dir, idle=10.0, maximum=60.0, max_flows=10000, live=False):
+        contract = artifact.get("flow_contract")
+        if contract is not None and contract != {"version": EXTRACTOR_VERSION, "idle": idle,
+                                                  "max_age": maximum, "max_flows": max_flows}:
+            raise ValueError(f"Detector settings must match the model flow contract: {contract}")
         self.artifact, self.live = artifact, live
         self.total_flows = self.alerts = 0
         out_dir = Path(out_dir)
@@ -41,10 +45,12 @@ class FlowDetector:
             **meta, "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "predicted_label": label, "is_attack": is_attack,
             "model_score_uncalibrated": float(proba[index]), "inference_ms": inference_ms,
-            "experimental_feature_parity_unvalidated": True,
+            "experimental_feature_parity_unvalidated": "flow_contract" not in self.artifact,
             "flow_extractor_version": EXTRACTOR_VERSION, "feature_values": row,
             "observed_first_packet_to_result_seconds": max(0, time.time() - meta["flow_first_epoch"]) if self.live else None,
         }
+        if "model_id" in self.artifact:
+            record["model_id"] = self.artifact["model_id"]
         self.total_flows += 1
         self.alerts += int(is_attack)
         # Benign records are needed to measure false alarms and misses in the lab.
@@ -143,10 +149,13 @@ def main():
     if args.csv:
         csv_smoke(artifact, args.csv)
         return
-    print("EXPERIMENTAL: CICFlowMeter/Scapy parity is unvalidated; live accuracy must be measured separately.", file=sys.stderr)
+    if "flow_contract" in artifact:
+        print(f"{artifact['model_id']}: capture uses the model's PCAP flow settings.", file=sys.stderr)
+    else:
+        print("EXPERIMENTAL: CICFlowMeter/Scapy parity is unvalidated; live accuracy must be measured separately.", file=sys.stderr)
     try:
         detector = FlowDetector(artifact, args.out, args.idle, args.max_age, args.max_flows, live=bool(args.iface))
-    except FileExistsError as error:
+    except (FileExistsError, ValueError) as error:
         ap.exit(1, f"Error: {error}\n")
     if args.pcap:
         from scapy.all import PcapReader

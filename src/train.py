@@ -15,7 +15,7 @@ from sklearn.ensemble import RandomForestClassifier, StackingClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
-from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_val_predict, train_test_split
+from sklearn.model_selection import GridSearchCV, StratifiedGroupKFold, StratifiedKFold, cross_val_predict, train_test_split
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.tree import DecisionTreeClassifier
@@ -131,6 +131,24 @@ def main():
     run_experiment(args, train, val, dev, test, metadata, external_metadata, removed)
 
 
+def session_folds(frame, labels, folds, seed):
+    groups = frame["session_id"]
+    if groups.nunique() < folds or groups.isna().any() or groups.astype(str).str.strip().eq("").any():
+        raise ValueError("Group CV requires enough named sessions.")
+    sessions = pd.DataFrame({"session": groups.to_numpy(), "label": labels}).drop_duplicates()
+    if sessions.session.is_unique and sessions.label.value_counts().min() >= folds:
+        # Stratifying the sessions themselves preserves rare classes in single-class cohorts.
+        cv = StratifiedKFold(folds, shuffle=True, random_state=seed)
+        splits = [(np.flatnonzero(groups.isin(sessions.session.iloc[fit])),
+                   np.flatnonzero(groups.isin(sessions.session.iloc[heldout])))
+                  for fit, heldout in cv.split(sessions, sessions.label)]
+    else:
+        splits = list(StratifiedGroupKFold(folds, shuffle=True, random_state=seed).split(frame, labels, groups))
+    if any(len(np.unique(labels[fit])) != len(np.unique(labels)) for fit, _ in splits):
+        raise ValueError("Each training fold must contain every model class. Inspect session/class support.")
+    return splits
+
+
 def run_experiment(args, train, val, dev, test, metadata, external_metadata=None, removed=0, *, stack_variant=None):
     """Refit once and evaluate a DataFrame or named tests; retain the single-test API."""
     root = Path(args.out)
@@ -162,7 +180,9 @@ def run_experiment(args, train, val, dev, test, metadata, external_metadata=None
         split_root.mkdir(exist_ok=True)
         for name, frame in (("train", train), ("validation", val), ("test", test)):
             frame.to_csv(split_root / f"{name}.csv", index=False)
-    cv = StratifiedKFold(args.folds, shuffle=True, random_state=args.seed)
+    grouped = metadata.get("flow_contract") is not None
+    cv = session_folds(train, y_train, args.folds, args.seed) if grouped else StratifiedKFold(args.folds, shuffle=True, random_state=args.seed)
+    refit_cv = session_folds(dev, y_dev, args.folds, args.seed) if grouped else cv
     chosen, selection, validation_proba = {}, {}, {}
     stack_search = getattr(args, "stack_search", False)
     variants = {"trees": ["rf", "xgb", "lgbm"], "diverse": ["rf", "xgb", "lr"]}
@@ -230,6 +250,8 @@ def run_experiment(args, train, val, dev, test, metadata, external_metadata=None
     all_predictions = {name: {} for name in tests}
     for name, candidate in chosen.items():
         print(f"Final fit on development data: {name}...", flush=True)
+        if name == "stacking" and grouped:
+            candidate.set_params(cv=refit_cv)
         start = time.perf_counter()
         candidate.fit(x_dev, y_dev)
         fitted_seconds = time.perf_counter() - start
@@ -248,6 +270,10 @@ def run_experiment(args, train, val, dev, test, metadata, external_metadata=None
                         "training_note": "Offline sampled reference; live traffic accuracy has not been validated."}
             if "label_taxonomy" in metadata:
                 artifact["label_taxonomy"] = metadata["label_taxonomy"]
+            if grouped:
+                artifact.update(model_id=metadata["configuration"], flow_contract=metadata["flow_contract"],
+                                feature_extractor=metadata["flow_contract"]["version"],
+                                training_note="Flow features extracted from PCAP. Validate performance on live captures.")
             joblib.dump(artifact, model_dir / "stacking_ids.joblib", compress=3)
             write_json(model_dir / "features.json", FEATURES)
             packages = ["numpy", "pandas", "scipy", "scikit-learn", "xgboost", "lightgbm", "joblib"]
@@ -289,6 +315,7 @@ def run_experiment(args, train, val, dev, test, metadata, external_metadata=None
         "python_version": platform.python_version(), "features": FEATURES,
         "limitations": ["Class sampling and feature deduplication change test prevalence.",
                         "Rare classes may be excluded; inspect raw counts and exclusions.",
+                        "Grouped by declared capture sessions and time blocks." if grouped else
                         "Exact-feature duplicates purged; related sessions may cross random splits.",
                         "Tuning before OOF is not nested tuning: held-out test is the evaluation.",
                         "Single-seed delta is descriptive, not statistical significance.",

@@ -120,6 +120,22 @@ Sau lần thử của agent, người dùng mở PowerShell Administrator và đ
 
 Chưa có phiên lab VM thật để nghiệm thu realtime. Quy trình cần thực hiện là smoke test model, capture traffic bình thường/scan/tải có giới hạn trên mạng lab, gán ground truth độc lập và đối chiếu log. Cần kiểm tra cùng PCAP qua hai extractor, hoặc train/test theo phiên bằng chính extractor triển khai. Các lệnh và điều kiện cần có được ghi ở EXTENSIONS/KALI_LAB.
 
+## Bổ sung: Stacking đa lớp theo nhóm chung của hai nguồn
+
+Hai taxonomy gốc được đối chiếu với lịch kịch bản CIC và bài gốc InSDN [1][2], sau đó xây dựng quy ước nhóm của đề tài `cic-insdn-families-v1`. Ánh xạ theo cơ chế gồm BENIGN, DOS, DDOS, RECON, BRUTE_FORCE, WEB_ATTACK, BOT; INFILTRATION, HEARTBLEED và U2R được giữ riêng thay vì gán tương đương thiếu căn cứ. Web brute force được xếp BRUTE_FORCE; XSS/SQL injection vào WEB_ATTACK. Đây là quyết định thiết kế có nguồn đối chiếu, chưa phải taxonomy chuẩn được hai tác giả thống nhất. Bảng đầy đủ và lưu ý cách gọi U2R/exploitation trong bài gốc ở LABEL_TAXONOMY.md.
+
+Ánh xạ diễn ra trước sampling mỗi nhóm/mỗi nguồn. RawLabel và source_dataset được giữ để truy vết, không tham gia 12 đặc trưng đầu vào. Tên nhãn không có trong bảng làm dừng pipeline. Model thực nghiệm có 9 lớp vì HEARTBLEED chỉ có 11 mẫu dưới ngưỡng 15. InSDN local không có BOTNET/Web-Attack nên BOT, WEB_ATTACK và INFILTRATION chỉ được học từ CIC; U2R chỉ từ InSDN.
+
+Với ba seed 7/21/42, cap 2.000, 60 cây và 3 folds, M3 đạt mean Macro-F1: CIC 96,473 ± 0,288%, InSDN 93,480 ± 4,121%, test gộp 94,409 ± 2,578%. Macro-F1 dùng cùng tập lớp có nhãn thật của mỗi test cho mọi thuật toán. Baseline có mean cao nhất lần lượt là XGB 96,361%, RF 95,055%, RF 94,467%. ES nhỉnh hơn ở CIC nhưng chưa vượt baseline trên InSDN hoặc test gộp. Số liệu đầy đủ M1/M2/M3 và support từng lớp nằm ở CURRENT_RESULTS.md và artifact `multiclass-families-*`.
+
+Các điểm F1 theo nhóm không là bằng chứng cải thiện so với subtype vì bài toán/sampling khác. M3 học cả hai miền nên đây là pooled-data evaluation; còn thiếu kiểm chứng độc lập theo phiên/thời gian, tính đồng nhất extractor và metrics live. Seed 42 được cố định để demo; không chọn seed 7 chỉ vì có điểm test tốt nhất. Notebook kết hợp xuất đầy đủ bảng và confusion matrix 9 lớp.
+
+## Kiểm tra triển khai và đối chiếu kiến trúc
+
+Đã kiểm tra artifact M3: base RF+XGB+LR, meta LogisticRegression, CV 3 folds, passthrough=False. Đầu vào meta có 27 cột xác suất (3 base × 9 lớp), không phải 12 đặc trưng gốc. StackingClassifier tạo OOF cho meta và refit các base trên toàn development; đây là hai tầng mô hình, không phải ba cấu hình dataset M1/M2/M3. Bản đối chiếu code, giới hạn nested tuning và nguồn phương pháp nằm ở STACKING_AUDIT.md.
+
+Đã đóng gói runtime/model/pin/taxonomy/test cho VM 9 nhóm, sửa gán nhãn lab theo taxonomy, bổ sung chuẩn hóa full CSV reference cho phép đo parity. Bộ kiểm tra có 58 test đều qua; model trong ZIP đã được nạp lại và chấm full test khớp bản gốc trên Windows. Replay PCAP tổng hợp xác nhận đường chạy, chưa xác nhận độ chính xác live hoặc parity trên PCAP thật. Việc bắt gói và đo trên Kali vẫn cần thực hiện theo VM_DEPLOYMENT.md và FEATURE_PARITY.md.
+
 ## Kết luận và hướng phát triển
 
 Đề tài đã hiện thực pipeline Stacking và các nhánh anomaly/host/graph, chạy thực nghiệm offline trên hai nguồn và lưu bằng chứng tái lập. Phần đóng góp là tổ chức pipeline, giao thức so sánh, chống trùng giữa nguồn, kiểm thử và phân tích kết quả; các thuật toán học được kế thừa từ thư viện.

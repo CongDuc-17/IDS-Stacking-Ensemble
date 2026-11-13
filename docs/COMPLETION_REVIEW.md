@@ -1,5 +1,8 @@
 # Đối chiếu các yêu cầu còn thiếu
 
+Cập nhật nhánh kết hợp đa lớp: đã có bảng ánh xạ có version/nguồn đối chiếu, kiểm tra nhãn lạ, thống kê nhãn trước/sau, shared splits, M1/M2/M3 theo nhóm và notebook huấn luyện. Xem [LABEL_TAXONOMY.md](LABEL_TAXONOMY.md). Đây là kiểm tra triển khai theo nhãn dataset, chưa phải thẩm định độc lập taxonomy hoặc kiểm chứng live.
+
+
 Cập nhật 10/11/2026 sau khi bổ sung code và chạy thực nghiệm. Căn cứ chính là 5 ghi chú cho Ensemble Stacking, code và artifact trong `experiments/completion-20261110/`. Hướng dẫn CNN và mẫu Word là tài liệu tham khảo. Gaussian, beaconing và graph trong bảng là các nhánh mở rộng, không tự thành tiêu chí bắt buộc của ES; xem STACKING_SCOPE.md.
 
 | Yêu cầu | Trạng thái và giới hạn |

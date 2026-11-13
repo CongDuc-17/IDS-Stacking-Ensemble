@@ -84,8 +84,6 @@ def run_three_models(args):
         raise ValueError("Require trees >= 1, folds >= 2 and max-per-class >= 15.")
     if root.resolve() in (cic_path, insdn_path) or any(p in root.resolve().parents for p in (cic_path, insdn_path)):
         raise ValueError("Experiment output must be outside the input dataset directories.")
-    from train import run_experiment, write_json
-
     multiclass = getattr(args, "multiclass", False)
     pooled_stack_variant = "trees" if multiclass and args.combined else None
     cic, cic_meta = read_sample(cic_path, args.max_per_class, args.seed, binary=not multiclass,
@@ -123,16 +121,27 @@ def run_three_models(args):
                       for raw, count in meta["raw_class_counts"].items()]).to_csv(root / "label_mapping.csv", index=False)
         pd.DataFrame({s: pd.concat(list(parts.values())).Label.value_counts()
                       for s, parts in splits.items()}).fillna(0).astype(int).sort_index().to_csv(root / "family_support.csv", index_label="family")
+    return fit_model_runs(args, splits, manifest, (cic_path, insdn_path))
+
+
+def fit_model_runs(args, splits, manifest, data_paths):
+    from train import run_experiment, write_json
+
+    root = Path(args.out)
+    multiclass = "label_taxonomy" in manifest
+    contract = manifest.get("flow_contract")
+    names = manifest.get("configuration_names", ("M1", "M2", "M3"))
+    cic_name, insdn_name, pooled_name = names
     write_json(root / "protocol.json", manifest)
     for source, parts in splits.items():
         folder = root / "splits" / source
         folder.mkdir(parents=True)
         for name, frame in parts.items():
             frame.to_csv(folder / f"{name}.csv", index=False)
-    specs = [("M1", ("cicids2017",), ("cicids2017",)),
-             ("M2", ("insdn",), ("insdn",))]
+    specs = [(cic_name, ("cicids2017",), ("cicids2017",)),
+             (insdn_name, ("insdn",), ("insdn",))]
     if args.combined:
-        specs.append(("M3", SOURCES, SOURCES))
+        specs.append((pooled_name, SOURCES, SOURCES))
     rows = []
     for configuration, train_sources, test_sources in specs:
         print(f"\n=== {configuration}: train {', '.join(train_sources)} ===", flush=True)
@@ -140,17 +149,18 @@ def run_three_models(args):
         val = pd.concat([splits[s]["validation"] for s in train_sources], ignore_index=True)
         dev = pd.concat([train, val], ignore_index=True)
         tests = {source: splits[source]["test"] for source in test_sources}
-        if configuration == "M3":
+        if configuration == pooled_name:
             tests["combined"] = pd.concat([splits[s]["test"] for s in SOURCES], ignore_index=True)
-        config = Namespace(**{**vars(args), "data": [str(cic_path), str(insdn_path)],
+        config = Namespace(**{**vars(args), "data": [str(path) for path in data_paths],
                               "dataset": "+".join(train_sources), "out": str(root / configuration), "test_data": None})
         scores = run_experiment(config, train, val, dev, tests, {
             "configuration": configuration, "training_sources": list(train_sources),
             "task": "multiclass" if multiclass else "binary",
             **({"label_taxonomy": manifest["label_taxonomy"]} if multiclass else {}),
+            **({"flow_contract": contract} if contract else {}),
             "shared_protocol": str((root / "protocol.json").resolve()),
             "split_protocol": manifest["protocol"],
-        }, stack_variant=pooled_stack_variant if configuration == "M3" else None)
+        }, stack_variant="trees" if contract else manifest.get("m3_stack_variant") if configuration == pooled_name else None)
         for test_source, models in scores.items():
             for model, metrics in models.items():
                 rows.append({"configuration": configuration, "test_dataset": test_source,

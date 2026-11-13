@@ -26,6 +26,29 @@ def flow():
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_lab_matches_live_timestamp_jitter_without_reusing_or_guessing_flows(self):
+        epoch = 1794539522.267002
+        truth = pd.DataFrame([
+            {**flow(), "flow_first_epoch": epoch, "Label": "BENIGN"},
+            {**flow(), "flow_first_epoch": epoch + 10, "Label": "RECON"},
+            {**flow(), "flow_first_epoch": epoch + 20, "Label": "RECON"},
+            {**flow(), "flow_first_epoch": epoch + 30, "Label": "RECON"},
+            {**flow(), "flow_first_epoch": epoch + 30.000003, "Label": "RECON"},
+        ])
+        predictions = pd.DataFrame([
+            {**flow(), "flow_first_epoch": epoch + 30.0000015, "predicted_label": "RECON"},
+            {**flow(), "flow_first_epoch": epoch + 20.00001, "predicted_label": "RECON"},
+            {**flow(), "flow_first_epoch": epoch + 10.000001, "predicted_label": "RECON"},
+            {**flow(), "flow_first_epoch": epoch + .0000012, "predicted_label": "BENIGN"},
+        ])
+        report = evaluate(predictions, truth)
+        self.assertEqual(report["confusion_matrix"], [[1, 0], [0, 1]])
+        self.assertEqual(report["truth_flows_without_prediction"], 3)
+        self.assertEqual(report["predicted_flows_without_truth"], 2)
+        swapped = evaluate(truth.rename(columns={"Label": "predicted_label"}),
+                           predictions.rename(columns={"predicted_label": "Label"}))
+        self.assertEqual(swapped["matched_flows"], 2)
+
     def test_lab_raw_labels_require_explicit_source_and_map_to_model_families(self):
         predictions = pd.DataFrame([{**flow(), "predicted_label": "RECON"}])
         truth = pd.DataFrame([{**flow(), "Label": "PortScan"}])

@@ -1,5 +1,8 @@
 # Hướng dẫn thực nghiệm M1/M2/M3
 
+Nhánh mặc định trong tài liệu này vẫn là BENIGN/ATTACK. Để chạy M1/M2/M3 **đa lớp theo nhóm chung**, thêm `--multiclass`; bảng nhãn, phạm vi dữ liệu và lệnh đầy đủ tại [LABEL_TAXONOMY.md](LABEL_TAXONOMY.md). Không gộp kết quả hai bài toán trong cùng bảng mean/SD.
+
+
 Cập nhật 08/11/2026. Chạy từ thư mục `network-stacking-ids` chứa README.
 
 ## 1. Mục tiêu và nhãn

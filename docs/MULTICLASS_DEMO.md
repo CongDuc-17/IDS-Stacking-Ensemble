@@ -1,5 +1,8 @@
 # Demo model Stacking đa lớp
 
+Đã bổ sung **M3 đa lớp học từ cả CIC + InSDN**, dùng 9 nhóm chung thay vì giữ nguyên subtype của từng nguồn. Xem [LABEL_TAXONOMY.md](LABEL_TAXONOMY.md) và notebook `training_combined.ipynb` (`MULTICLASS=True`). Các model và số liệu riêng từng nguồn dưới đây là thí nghiệm subtype cũ, tiếp tục được giữ để đối chiếu đúng bài toán.
+
+
 Model mẫu cố định: CIC-IDS2017, seed 42, cap 2000/lớp, 60 cây, 3 folds, tuning baseline và meta-search bằng train/validation. Không chọn seed theo điểm test. Kết quả thực nghiệm phải đọc từ CURRENT_RESULTS.md, không mặc định ES thắng baseline.
 
 ## Windows: đánh giá và gọi tên subtype

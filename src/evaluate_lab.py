@@ -2,10 +2,12 @@
 import argparse
 import json
 from pathlib import Path
+import numpy as np
 import pandas as pd
 from sklearn.metrics import classification_report, confusion_matrix
 
 KEYS = ["src_ip", "src_port", "dst_ip", "dst_port", "protocol", "flow_first_epoch"]
+START_TOLERANCE_SECONDS = 2e-6
 
 
 def normalize_labels(labels):
@@ -17,15 +19,48 @@ def normalize_labels(labels):
     return labels.mask(normalized.isin(["benign", "normal"]), "BENIGN").mask(normalized.eq("attack"), "ATTACK")
 
 
+def match_flows(truth, predictions):
+    truth = truth.sort_values("flow_first_epoch")
+    predictions = predictions.sort_values("flow_first_epoch")
+    truth_times = truth.flow_first_epoch.to_numpy(dtype=float)
+    prediction_times = predictions.flow_first_epoch.to_numpy(dtype=float)
+    prediction_groups = predictions.groupby(KEYS[:-1], sort=False).indices
+    truth_rows, prediction_rows = [], []
+
+    for key, left_rows in truth.groupby(KEYS[:-1], sort=False).indices.items():
+        right_rows = prediction_groups.get(key)
+        if right_rows is None:
+            continue
+        left, right = truth_times[left_rows], prediction_times[right_rows]
+        # Subtract a shared origin before applying a microsecond tolerance.
+        origin = min(left[0], right[0])
+        left, right = left - origin, right - origin
+        first = right.searchsorted(left - START_TOLERANCE_SECONDS)
+        last = right.searchsorted(left + START_TOLERANCE_SECONDS, side="right")
+        unique_left = np.flatnonzero(last - first == 1)
+        unique_right = first[unique_left]
+        chosen = right[unique_right]
+        candidates = left.searchsorted(chosen + START_TOLERANCE_SECONDS, side="right") - left.searchsorted(
+            chosen - START_TOLERANCE_SECONDS)
+        # Match only if each side has exactly one candidate.
+        unambiguous = candidates == 1
+        truth_rows.extend(left_rows[unique_left[unambiguous]])
+        prediction_rows.extend(right_rows[unique_right[unambiguous]])
+
+    return predictions.iloc[prediction_rows].assign(Label=truth.Label.iloc[truth_rows].to_numpy())
+
+
 def evaluate(predictions, truth, *, artifact=None, truth_source=None, binary_only=False):
     required = set(KEYS)
     if not required.union({"predicted_label"}) <= set(predictions) or not required.union({"Label"}) <= set(truth):
         raise ValueError("Need flow metadata keys and predicted_label/Label.")
     predictions, truth = predictions.copy(), truth.copy()
     for frame in [predictions, truth]:
-        frame["flow_first_epoch"] = pd.to_numeric(frame["flow_first_epoch"], errors="raise").round(6)
-        if frame[KEYS].isna().any().any():
-            raise ValueError("Ground truth/prediction keys must not be missing.")
+        frame["flow_first_epoch"] = pd.to_numeric(frame["flow_first_epoch"], errors="raise")
+        if frame[KEYS].isna().any().any() or not np.isfinite(frame.flow_first_epoch).all():
+            raise ValueError("Ground truth/prediction keys must not be missing and timestamps must be finite.")
+        if frame.duplicated(KEYS).any():
+            raise ValueError("Ground truth/prediction flow keys must be unique.")
     for frame, column in ((truth, "Label"), (predictions, "predicted_label")):
         frame[column] = normalize_labels(frame[column])
     if truth_source and (artifact is None or "label_taxonomy" not in artifact):
@@ -50,8 +85,7 @@ def evaluate(predictions, truth, *, artifact=None, truth_source=None, binary_onl
     if binary_only:
         for frame, column in ((truth, "Label"), (predictions, "predicted_label")):
             frame[column] = frame[column].where(frame[column].eq("BENIGN"), "ATTACK")
-    joined = truth.merge(predictions, on=KEYS, how="outer", indicator=True, validate="one_to_one", suffixes=("_truth", ""))
-    matched = joined.loc[joined["_merge"] == "both"].copy()
+    matched = match_flows(truth, predictions)
     if matched.empty:
         raise ValueError("No matching flows. Check capture, clock, direction, idle and max-age settings.")
     y = matched["Label"]
@@ -62,8 +96,9 @@ def evaluate(predictions, truth, *, artifact=None, truth_source=None, binary_onl
                            "model_task": artifact.get("task") if artifact else None,
                            "taxonomy_sha256": artifact.get("label_taxonomy", {}).get("sha256") if artifact else None},
         "matched_flows": len(matched),
-        "truth_flows_without_prediction": int((joined["_merge"] == "left_only").sum()),
-        "predicted_flows_without_truth": int((joined["_merge"] == "right_only").sum()),
+        "flow_start_tolerance_us": START_TOLERANCE_SECONDS * 1e6,
+        "truth_flows_without_prediction": len(truth) - len(matched),
+        "predicted_flows_without_truth": len(predictions) - len(matched),
         "classification_report_matched_only": classification_report(y, p, zero_division=0, output_dict=True),
         "binary_detection_matched_only": classification_report(y != "BENIGN", p != "BENIGN", labels=[False, True],
             target_names=["BENIGN", "ATTACK"], zero_division=0, output_dict=True),

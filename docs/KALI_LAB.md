@@ -20,7 +20,7 @@ Ghi lại interface Host-only và IP Kali, ví dụ `eth1`, `192.168.56.101`; IP
 
 ## 2. Chuyển và kiểm tra model
 
-Chép nguyên project đã đóng gói vào `~/network-stacking-ids/`. Không cần chép tám CSV gốc để chạy dự đoán. Thư mục `experiments/completion-20261110/three-models-seed42/M3/models` và `smoke_test.csv` phải đi cùng nhau.
+Chép nguyên project đã đóng gói vào `~/network-stacking-ids/`. Không cần chép tám CSV gốc để chạy dự đoán. Thư mục `experiments/completion-20261110/multiclass-families-seed42/M3/models` và `smoke_test.csv` phải đi cùng nhau.
 
 ```bash
 cd ~/network-stacking-ids
@@ -31,10 +31,10 @@ Model đi kèm được train bằng Python 3.14.6. Nếu Kali có cùng Python,
 ```bash
 uv python install 3.14.6
 uv venv --python 3.14.6 .venv
-uv pip install --python .venv/bin/python -r requirements-lab.in -r experiments/completion-20261110/three-models-seed42/M3/models/requirements-deploy.txt
+uv pip install --python .venv/bin/python -r requirements-lab.in -r experiments/completion-20261110/multiclass-families-seed42/M3/models/requirements-deploy.txt
 .venv/bin/python src/detect.py \
-  --model experiments/completion-20261110/three-models-seed42/M3/models/stacking_ids.joblib \
-  --csv experiments/completion-20261110/three-models-seed42/M3/cicids2017/smoke_test.csv
+  --model experiments/completion-20261110/multiclass-families-seed42/M3/models/stacking_ids.joblib \
+  --csv experiments/completion-20261110/multiclass-families-seed42/M3/cicids2017/smoke_test.csv
 ```
 
 Phải có `Prediction match: 100.00%`. Nếu package pin không cài được trên nền tảng Kali, tạo môi trường tương thích trên cả Windows và Kali rồi train lại; không ép load model với phiên bản scikit-learn khác. Không cần cài Jupyter/matplotlib chỉ để suy luận.
@@ -45,7 +45,7 @@ Ví dụ dùng `eth1`; thay bằng interface đã xác minh. Cần quyền captu
 
 ```bash
 sudo "$(pwd)/.venv/bin/python" src/detect.py \
-  --model experiments/completion-20261110/three-models-seed42/M3/models/stacking_ids.joblib \
+  --model experiments/completion-20261110/multiclass-families-seed42/M3/models/stacking_ids.joblib \
   --iface eth1 --capture-filter 'host 192.168.56.1' --out logs/run01 --idle 10 --max-age 60 --max-flows 10000
 ```
 
@@ -105,14 +105,15 @@ Trích flow từ PCAP bằng đúng timeout như detector:
   --out captures/run01-truth.csv --idle 10 --max-age 60
 ```
 
-Thêm cột `Label` vào CSV, gán nhãn theo kịch bản, endpoint và khoảng thời gian thật. Không gán nhãn bằng output của model. Nếu capture chỉ gồm một loại traffic đã xác minh, có thể dùng `--label BENIGN` hoặc `--label PortScan` khi extract; không gán mọi flow trong capture hỗn hợp là attack.
+Thêm cột `Label` vào CSV, gán nhãn theo kịch bản, endpoint và khoảng thời gian thật. Không gán nhãn bằng output của model. Nếu capture chỉ gồm một loại traffic đã xác minh, có thể dùng `--label BENIGN` hoặc `--label RECON` cho M3 9 nhóm khi extract; không gán mọi flow trong capture hỗn hợp là attack.
 
 Tool đánh giá chuẩn hóa khoảng trắng và BENIGN/Normal/ATTACK không phân biệt hoa thường; từ chối nhãn rỗng, thiếu hoặc UNKNOWN. Mỗi lượt detector dùng `--out` mới: nếu `predictions.jsonl` đã tồn tại, chương trình báo lỗi để giữ riêng log của từng lượt.
 
-Đối với lớp lab chưa tồn tại trong model, như `SYN-LAB`, báo cáo binary detection; điểm phân loại chi tiết vào các lớp dataset không có ý nghĩa tương ứng. Chạy:
+Với nhãn CIC gốc như PortScan, thêm `--truth-source cicids2017` để đổi sang RECON theo taxonomy model. Đối với lớp lab chưa tồn tại trong model, như `SYN-LAB`, thêm `--binary-only` để chỉ báo cáo binary detection; điểm phân loại chi tiết vào các lớp dataset không có ý nghĩa tương ứng. Chạy:
 
 ```bash
 .venv/bin/python src/evaluate_lab.py \
+  --model experiments/completion-20261110/multiclass-families-seed42/M3/models/stacking_ids.joblib \
   --predictions logs/run01/predictions.jsonl \
   --truth captures/run01-truth.csv --out logs/run01/lab-metrics.json
 ```
